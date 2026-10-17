@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Guardrail Load Simulator</title>
+<style>
+:root{
+  --bg:#0c0f14; --panel:#131821; --panel2:#1a2130; --line:#242d3d;
+  --tx:#e6edf7; --tx2:#93a1b8; --tx3:#5d6b82;
+  --acc:#5aa9ff; --ok:#3ecf8e; --warn:#f5b949; --bad:#ff6b6b;
+  --prefill:#7c6cff; --decode:#3ecf8e; --queue:#f5b949;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--tx);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+#app{display:grid;grid-template-columns:286px 1fr;height:100vh;overflow:hidden}
+aside{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:12px}
+main{overflow-y:auto;padding:14px 16px 28px;display:flex;flex-direction:column;gap:14px}
+h1{font-size:14px;margin:0 0 2px;letter-spacing:.2px}
+.sub{color:var(--tx3);font-size:11px;margin-bottom:12px}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.9px;color:var(--tx3);margin:16px 0 8px;font-weight:600}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px}
+label{font-size:12px;color:var(--tx2)}
+.val{font:11px/1 var(--mono);color:var(--tx);background:var(--panel2);padding:3px 6px;border-radius:4px;min-width:52px;text-align:right}
+input[type=range]{width:100%;accent-color:var(--acc);height:16px}
+select,input[type=number]{width:100%;background:var(--panel2);color:var(--tx);border:1px solid var(--line);border-radius:5px;padding:5px 6px;font:12px var(--mono)}
+.ctl{margin-bottom:11px}
+.btns{display:flex;gap:6px;margin-bottom:6px}
+button{flex:1;background:var(--panel2);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:7px 8px;font-size:12px;cursor:pointer}
+button:hover{border-color:var(--acc);color:#fff}
+button.on{background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+.card h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.9px;color:var(--tx3);font-weight:600}
+#flowWrap{position:relative}
+canvas{display:block;width:100%}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px}
+.tile{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.tile .k{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--tx3)}
+.tile .v{font:18px/1.25 var(--mono);margin-top:3px}
+.tile .v small{font-size:11px;color:var(--tx3)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:1100px){.grid2{grid-template-columns:1fr}}
+.gpus{display:flex;flex-wrap:wrap;gap:10px}
+.rep{border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--panel2);min-width:150px}
+.rep .rh{display:flex;justify-content:space-between;font:10px var(--mono);color:var(--tx3);margin-bottom:6px}
+.bar{height:7px;background:#0c1017;border-radius:4px;overflow:hidden;margin:3px 0 7px}
+.bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .1s linear}
+.blab{display:flex;justify-content:space-between;font:9px var(--mono);color:var(--tx3)}
+.derived{font:11px/1.7 var(--mono);color:var(--tx2)}
+.derived b{color:var(--tx);font-weight:500}
+.derived .hl{color:var(--acc)}
+.note{font-size:11px;color:var(--tx3);line-height:1.5}
+.legend{display:flex;gap:12px;font:10px var(--mono);color:var(--tx3);margin-top:8px;flex-wrap:wrap}
+.q{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;border-radius:50%;border:1px solid var(--line);color:var(--tx3);font-size:9px;cursor:help;margin-left:5px;vertical-align:1px;flex:none}
+.q:hover{border-color:var(--acc);color:var(--acc)}
+#tip{position:fixed;z-index:99;max-width:300px;background:#080c13;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:11.5px;line-height:1.55;color:var(--tx2);box-shadow:0 10px 28px #000a;pointer-events:none;opacity:0;transition:opacity .09s}
+#tip.on{opacity:1}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.good{color:var(--ok)}.bad{color:var(--bad)}.warnc{color:var(--warn)}
+</style>
+</head>
+<body>
+<div id="app">
+<aside>
+  <h1>Guardrail Load Simulator</h1>
+  <div class="sub">Closed-loop chatbot · blocking groundedness check on vLLM</div>
+
+  <div class="btns">
+    <button id="bPlay" class="on">Pause</button>
+    <button id="bReset">Reset</button>
+  </div>
+  <div class="row"><label>Speed <span class="q" data-tip="Simulated seconds per real second. Crank it to reach steady state fast, drop to 1x to watch individual calls move through the lanes.">?</span></label><span class="val" id="vSpeed">4x</span></div>
+  <input type="range" autocomplete="off" id="speed" min="1" max="100" step="1" value="4">
+
+  <h2>Workload</h2>
+  <div id="knobsWorkload"></div>
+
+  <h2>Model &amp; quantisation</h2>
+  <div class="ctl"><div class="row"><label>Model preset <span class="q" data-tip="Weight footprint and KV size of the guardrail model. Presets are approximations — override the three numbers below with your own measurements once you have them.">?</span></label></div><select id="model" autocomplete="off"></select></div>
+  <div class="row"><label>Raw params (B) <span class="q" data-tip="Parameters whose weights sit in HBM, in billions. Sets VRAM use and, together with quantisation, decode speed. For effective-param names like E2B/E4B this is larger than the label suggests.">?</span></label><input type="number" autocomplete="off" id="pRaw" step="0.1" style="width:76px"></div>
+  <div class="row"><label>Active/token (B) <span class="q" data-tip="Parameters actually touched per token, in billions. Equals raw params for a dense model; smaller for MoE or layer-skipping designs. Drives prefill FLOPs and decode bandwidth.">?</span></label><input type="number" autocomplete="off" id="pAct" step="0.1" style="width:76px"></div>
+  <div class="row"><label>KV KB/token <span class="q" data-tip="KV cache bytes per token, in KB, at fp16: 2 × layers × kv_heads × head_dim × 2 bytes. Decides how many sequences fit at once — the biggest lever on concurrency at long context.">?</span></label><input type="number" autocomplete="off" id="pKv" step="1" style="width:76px"></div>
+  <div class="ctl"><div class="row"><label>Quantisation <span class="q" data-tip="Bytes per weight. Shrinks VRAM (bigger KV pool → more concurrency) and speeds up bandwidth-bound decode. It barely helps compute-bound prefill, which is why latency moves less than you expect on this workload.">?</span></label></div><select id="quant" autocomplete="off"></select></div>
+
+  <h2>Hardware</h2>
+  <div class="ctl"><div class="row"><label>GPU <span class="q" data-tip="HBM bandwidth sets decode speed, dense bf16 TFLOPS sets prefill speed, VRAM sets how much KV cache is left after the weights.">?</span></label></div><select id="gpu" autocomplete="off"></select></div>
+  <div id="knobsHw"></div>
+
+  <h2>Serving config</h2>
+  <div id="knobsServe"></div>
+
+  <h2>Efficiency assumptions</h2>
+  <div id="knobsEff"></div>
+
+  <h2>Seed</h2>
+  <div class="row"><label>RNG seed <span class="q" data-tip="Same seed + same knobs = identical run. Change one parameter at a time with the seed fixed to compare honestly.">?</span></label><input type="number" autocomplete="off" id="seed" value="7" style="width:76px"></div>
+</aside>
+
+<main>
+  <div class="card" id="flowWrap">
+    <h3>Call flow <span id="clock" style="float:right;font-family:var(--mono);color:var(--tx2);text-transform:none;letter-spacing:0">t = 0s</span></h3>
+    <canvas id="flow" height="300"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--tx3)"></i>session thinking</span>
+      <span><i style="background:var(--acc)"></i>chatbot drafting</span>
+      <span><i style="background:var(--queue)"></i>queued (waiting for a slot)</span>
+      <span><i style="background:var(--prefill)"></i>prefill</span>
+      <span><i style="background:var(--decode)"></i>decode</span>
+    </div>
+  </div>
+
+  <div class="tiles" id="stats"></div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>GPUs</h3>
+      <div class="gpus" id="gpus"></div>
+      <div class="note" style="margin-top:10px">Busy% = fraction of time a forward pass is running. Eff% = achieved token throughput vs this config's peak — low Eff at 100% Busy means the batch is too small to saturate the GPU.</div>
+    </div>
+    <div class="card">
+      <h3>Derived config</h3>
+      <div class="derived" id="derived"></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card"><h3>p95 guardrail latency (ms)</h3><canvas id="cLat" height="120"></canvas></div>
+    <div class="card"><h3>Queue depth (calls waiting)</h3><canvas id="cQ" height="120"></canvas></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><h3>Throughput (calls/s)</h3><canvas id="cTp" height="120"></canvas></div>
+    <div class="card"><h3>Batch occupancy (running calls)</h3><canvas id="cB" height="120"></canvas></div>
+  </div>
+</main>
+</div>
+<script>
+"use strict";
+/* ---------- presets (approximate; edit the number fields to match your own measurements) ---------- */
+const GPUS = {
+  "H100 80GB SXM": {vram:80,  bw:3350, tflops:989},
+  "H200 141GB":    {vram:141, bw:4800, tflops:989},
+  "A100 80GB":     {vram:80,  bw:2039, tflops:312},
+  "L40S 48GB":     {vram:48,  bw:864,  tflops:362},
+  "L4 24GB":       {vram:24,  bw:300,  tflops:121},
+  "RTX 4090 24GB": {vram:24,  bw:1008, tflops:165},
+};
+// raw = bytes-resident param count, active = params touched per token, kvkb = KV cache KB/token @fp16
+const MODELS = {
+  "Gemma 4 E2B (~5B raw / 2B active)": {raw:5.0, act:2.0, kvkb:50},
+  "Gemma 4 E4B (~8B raw / 4B active)": {raw:8.0, act:4.0, kvkb:70},
+  "Llama 3.2 1B":  {raw:1.24, act:1.24, kvkb:32},
+  "Llama 3.2 3B":  {raw:3.21, act:3.21, kvkb:56},
+  "Qwen3 4B":      {raw:4.0,  act:4.0,  kvkb:72},
+};
+const QUANTS = {"bf16 (2 B/param)":2, "fp8 (1 B/param)":1, "int4 awq/gptq (0.5 B/param)":0.5};
+
+/* ---------- knobs ---------- */
+const KNOBS = [
+  ["workload","sessions","Concurrent sessions",1,2000,1,300,"",
+   "Chat sessions live at once. Closed loop: each session thinks, sends one turn, waits for the guardrail, thinks again — so if the server slows down, arrivals slow down too instead of piling up forever."],
+  ["workload","think","Mean think time",1,120,1,20,"s",
+   "Mean seconds a user spends reading the answer and typing the next message, exponentially distributed. Shorter think time = more turns/s from the same number of users. This is the main load dial."],
+  ["workload","draft","Chatbot draft time",0,10,0.1,1.5,"s",
+   "Seconds the chatbot LLM takes to write the draft answer, before the guardrail sees it. Served elsewhere, so it costs no GPU here — it delays arrivals and adds to what the user feels on top of the guardrail."],
+  ["workload","claims","Guardrail calls / turn",1,8,1,1,"",
+   "Calls per chatbot turn. 1 = check the whole answer in one prompt. Higher = split the answer into claims and check each in parallel: load multiplies, and the turn ends only when the slowest call returns, so the tail gets worse faster than the mean."],
+  ["workload","promptTok","Median prompt tokens",200,64000,100,1500,"tok",
+   "Median size of one guardrail prompt: question + retrieved context + draft answer. Spread is lognormal (sigma 0.45). Prefill cost grows linearly with it, and so does KV cache per sequence — at long context the KV pool, not max_num_seqs, caps concurrency."],
+  ["workload","outTok","Output tokens (verdict)",1,64,1,8,"tok",
+   "Tokens the guardrail generates — a verdict, maybe a score or span. Tiny by design, which is why this workload is prefill-dominated. Raise it if you want an explanation back and watch decode take over the service time."],
+  ["workload","slo","SLO budget",50,3000,25,400,"ms",
+   "Latency budget for the user-facing turn: first guardrail call enqueued until the last one finishes. Scores the within-SLO tile only; it does not change the simulation."],
+  ["hw","replicas","Replicas (data parallel)",1,8,1,1,"",
+   "Independent vLLM instances, each with its own GPUs, behind a least-loaded balancer. Buys throughput; a single call is no faster. Total GPUs = replicas × TP."],
+  ["hw","tp","Tensor parallel / replica",1,8,1,1,"GPU",
+   "GPUs per replica, with the model sharded across them. Buys bandwidth and FLOPs for one call (lower latency) plus VRAM for KV cache. The TP-vs-replicas choice is make-one-call-faster vs serve-more-calls."],
+  ["serve","maxSeqs","max_num_seqs",1,512,1,64,"",
+   "vLLM cap on sequences running concurrently in one batch. Calls beyond it wait in the queue. Raising it buys throughput and costs per-call latency — until the KV cache limit binds first, which the Derived config panel tells you."],
+  ["serve","kp","Prefill batch gain k",0,32,1,2,"",
+   "Shape of the prefill batching curve: aggregate = single-stream × (k+1)·B/(B+k). k near 0 means one request already saturates compute, so batching adds nothing (true for long prompts). Larger k means short prompts that batch well."],
+  ["serve","kd","Decode batch gain k",1,256,1,32,"",
+   "Same curve for decode: k is the batch size at which each request runs at about half its single-stream speed. Decode reads the weights once for the whole batch, so it batches well and k is large — tens."],
+  ["eff","mbu","Memory bandwidth util",0.1,0.95,0.01,0.7,"",
+   "Fraction of the GPU's peak HBM bandwidth actually achieved. Sets decode speed. Real serving stacks land around 0.6-0.85."],
+  ["eff","mfu","Model FLOPs util",0.05,0.8,0.01,0.4,"",
+   "Fraction of peak FLOPs actually achieved during prefill. Sets prefill speed. Real stacks land around 0.3-0.5 at bf16, lower for small models and short prompts."],
+  ["eff","vramHead","Usable VRAM fraction",0.7,0.98,0.01,0.9,"",
+   "Share of VRAM available for weights plus KV cache. The rest goes to activations, CUDA graphs and fragmentation — vLLM's gpu_memory_utilization in spirit."],
+];
+const P = {};
+function buildKnobs(){
+  const hosts = {workload:"knobsWorkload",hw:"knobsHw",serve:"knobsServe",eff:"knobsEff"};
+  for (const [grp,key,label,min,max,step,def,unit,tip] of KNOBS){
+    P[key]=def;
+    const host=document.getElementById(hosts[grp]);
+    const d=document.createElement("div"); d.className="ctl";
+    d.innerHTML='<div class="row"><label>'+label+' <span class="q" data-tip="'+tip.replace(/"/g,"&quot;")+'">?</span></label><span class="val" id="v_'+key+'"></span></div>'+
+      '<input type="range" autocomplete="off" id="k_'+key+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+def+'">';
+    host.appendChild(d);
+    const inp=d.querySelector("input"), out=d.querySelector(".val");
+    const show=()=>{out.textContent=(step<1?(+P[key]).toFixed(2):P[key])+(unit?" "+unit:"");};
+    inp.oninput=()=>{P[key]=parseFloat(inp.value); show();};
+    show();
+  }
+}
+buildKnobs();
+
+function fillSel(id,obj,def){
+  const s=document.getElementById(id);
+  for (const k of Object.keys(obj)){const o=document.createElement("option");o.value=k;o.textContent=k;s.appendChild(o);}
+  s.value=def; return s;
+}
+const selModel=fillSel("model",MODELS,"Gemma 4 E2B (~5B raw / 2B active)");
+const selGpu=fillSel("gpu",GPUS,"L40S 48GB");
+const selQuant=fillSel("quant",QUANTS,"bf16 (2 B/param)");
+const inRaw=document.getElementById("pRaw"), inAct=document.getElementById("pAct"), inKv=document.getElementById("pKv");
+function applyModelPreset(){const m=MODELS[selModel.value];inRaw.value=m.raw;inAct.value=m.act;inKv.value=m.kvkb;}
+applyModelPreset(); selModel.onchange=applyModelPreset;
+
+/* ---------- rng ---------- */
+let rngState=1;
+function srand(s){rngState=(s>>>0)||1;}
+function rnd(){rngState^=rngState<<13;rngState^=rngState>>>17;rngState^=rngState<<5;return ((rngState>>>0)%1e6)/1e6;}
+const expo=m=>-m*Math.log(1-rnd()*0.999999);
+const lognorm=(med,sig)=>{ // Box-Muller
+  const u1=Math.max(rnd(),1e-6),u2=rnd();
+  const z=Math.sqrt(-2*Math.log(u1))*Math.cos(2*Math.PI*u2);
+  return Math.max(16,Math.round(med*Math.exp(sig*z)));
+};
+
+/* ---------- derived config ---------- */
+function cfg(){
+  const g=GPUS[selGpu.value], bpp=QUANTS[selQuant.value];
+  const raw=Math.max(0.05,parseFloat(inRaw.value)||1), act=Math.max(0.05,parseFloat(inAct.value)||1);
+  const kvkb=Math.max(1,parseFloat(inKv.value)||32);
+  const wGB=raw*bpp;                       // total weight bytes (GB)
+  const wPerGpu=wGB/P.tp;
+  const usable=g.vram*P.vramHead;
+  const kvPerGpu=Math.max(0,usable-wPerGpu);
+  const kvTotal=kvPerGpu*P.tp;             // KV sharded across TP ranks
+  const kvTok=Math.floor(kvTotal*1e9/(kvkb*1024));
+  const seqLen=P.promptTok+P.outTok;
+  const seqsByKv=Math.max(1,Math.floor(kvTok/seqLen));
+  const effSeqs=Math.min(P.maxSeqs,seqsByKv);
+  const memBW=g.bw*P.tp*P.mbu*1e9;         // B/s
+  const flops=g.tflops*P.tp*P.mfu*1e12;
+  const decode1=memBW/(act*1e9*bpp);       // tok/s, single stream, bandwidth bound
+  const prefill1=flops/(2*act*1e9);        // tok/s, single stream, compute bound
+  const peakTok=prefill1*(P.kp+1);
+  const svc1=P.promptTok/prefill1+P.outTok/decode1;
+  return {g,bpp,raw,act,kvkb,wGB,wPerGpu,usable,kvPerGpu,kvTotal,kvTok,seqsByKv,effSeqs,
+          decode1,prefill1,peakTok,svc1,oom:wPerGpu>usable};
+}
+
+/* ---------- sim state ---------- */
+let S;
+function reset(){
+  srand(parseInt(document.getElementById("seed").value)||7);
+  S={t:0,sessions:[],reps:[],lat:[],turn:[],qw:[],sv:[],done:0,over:0,turns:0,rate:0,tokRate:0,
+     hist:{lat:[],q:[],tp:[],b:[]},nextSample:0};
+  syncStruct(true);
+}
+function mkSession(){return {st:"think",timer:rnd()*P.think,pending:0,tTurn:0,worst:0};}
+function syncStruct(force){
+  const n=Math.round(P.sessions);
+  while(S.sessions.length<n) S.sessions.push(mkSession());
+  if(S.sessions.length>n) S.sessions.length=n;
+  const R=Math.round(P.replicas);
+  if(force||S.reps.length!==R){S.reps=[];for(let i=0;i<R;i++)S.reps.push({q:[],run:[],busy:0,eff:0,ach:0});}
+}
+function dispatch(s,c){
+  let best=S.reps[0],bl=Infinity;
+  for(const r of S.reps){const l=r.q.length+r.run.length;if(l<bl){bl=l;best=r;}}
+  best.q.push({s,pt:lognorm(P.promptTok,0.45),ot:Math.max(1,Math.round(P.outTok*(0.7+0.6*rnd()))),
+               phase:"prefill",rem:0,tArr:S.t,tRun:-1,init:0});
+  const call=best.q[best.q.length-1]; call.rem=call.pt; call.init=call.pt;
+}
+function push(arr,v){arr.push(v); if(arr.length>400) arr.shift();}
+
+function step(dt,C){
+  S.t+=dt;
+  // sessions
+  for(const s of S.sessions){
+    if(s.st==="think"){ s.timer-=dt; if(s.timer<=0){s.st="draft"; s.timer=P.draft*(0.6+0.8*rnd());} }
+    else if(s.st==="draft"){ s.timer-=dt; if(s.timer<=0){
+        s.st="wait"; s.pending=Math.round(P.claims); s.tTurn=S.t; s.worst=0;
+        for(let i=0;i<s.pending;i++) dispatch(s,C);
+      } }
+  }
+  // replicas
+  let totalAch=0;
+  for(const r of S.reps){
+    while(r.run.length<C.effSeqs && r.q.length){const c=r.q.shift(); c.tRun=S.t; r.run.push(c);}
+    const B=r.run.length;
+    const pr=B?C.prefill1*(P.kp+1)/(B+P.kp):0;
+    const dr=B?C.decode1*(P.kd+1)/(B+P.kd):0;
+    let ach=0;
+    for(let i=r.run.length-1;i>=0;i--){
+      const c=r.run[i];
+      if(c.phase==="prefill"){ c.rem-=pr*dt; ach+=pr;
+        if(c.rem<=0){c.phase="decode"; c.rem=c.ot; c.init=c.ot;} }
+      else { c.rem-=dr*dt; ach+=dr;
+        if(c.rem<=0){
+          r.run.splice(i,1);
+          const lat=S.t-c.tArr, wait=c.tRun-c.tArr;
+          push(S.lat,lat); push(S.qw,wait); push(S.sv,lat-wait);
+          S.done++;
+          const s=c.s; s.worst=Math.max(s.worst,lat);
+          if(--s.pending<=0){ s.st="think"; s.timer=expo(P.think);
+            push(S.turn,s.worst); S.turns++; if(s.worst*1000>P.slo) S.over++; }
+        } }
+    }
+    r.busy+= ((B>0?1:0)-r.busy)*Math.min(1,dt/0.3);
+    r.ach=ach; r.eff+=(Math.min(1,ach/Math.max(1,C.peakTok))-r.eff)*Math.min(1,dt/0.3);
+    totalAch+=ach;
+  }
+  S.tokRate+=(totalAch-S.tokRate)*Math.min(1,dt/0.3);
+  // sampled history
+  if(S.t>=S.nextSample){
+    S.nextSample=S.t+0.25;
+    let q=0,b=0; for(const r of S.reps){q+=r.q.length;b+=r.run.length;}
+    push(S.hist.lat,pct(S.turn,95)*1000); push(S.hist.q,q); push(S.hist.tp,S.rate); push(S.hist.b,b);
+  }
+}
+function pct(a,p){ if(!a.length) return 0; const b=[...a].sort((x,y)=>x-y); return b[Math.min(b.length-1,Math.floor(p/100*b.length))]; }
+
+/* ---------- render ---------- */
+function fit(c,h){const dpr=devicePixelRatio||1,w=c.clientWidth;if(c.width!==w*dpr||c.height!==h*dpr){c.width=w*dpr;c.height=h*dpr;}
+  const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,w,h);return [x,w,h];}
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function drawFlow(C){
+  const cv=document.getElementById("flow");
+  const [x,w,h]=fit(cv,300);
+  const lanes=[["thinking",0.00,0.19],["drafting",0.205,0.335],["queued",0.35,0.50],["running",0.515,0.835],["done",0.85,1.0]];
+  let counts={thinking:0,drafting:0,queued:0,running:0};
+  for(const s of S.sessions){ if(s.st==="think")counts.thinking++; else if(s.st==="draft")counts.drafting++; }
+  for(const r of S.reps){counts.queued+=r.q.length;counts.running+=r.run.length;}
+  x.font="10px "+css("--mono");
+  lanes.forEach(([name,a,b],li)=>{
+    const X=a*w+6, W=(b-a)*w-12;
+    x.strokeStyle=css("--line"); x.fillStyle="#0e1320";
+    x.beginPath(); x.roundRect(X,22,W,h-30,8); x.fill(); x.stroke();
+    x.fillStyle=css("--tx3"); x.fillText(name.toUpperCase(),X+2,14);
+    if(name!=="done"){x.fillStyle=css("--tx2");x.textAlign="right";x.fillText(counts[name],X+W-2,14);x.textAlign="left";}
+    if(name==="thinking") dots(x,X,W,h,counts.thinking,()=>css("--tx3"));
+    if(name==="drafting") dots(x,X,W,h,counts.drafting,()=>css("--acc"));
+    if(name==="queued")   dots(x,X,W,h,counts.queued,()=>css("--queue"));
+    if(name==="running")  slots(x,X,W,h,C);
+    if(name==="done"){
+      x.fillStyle=css("--tx2"); x.font="12px "+css("--mono");
+      x.fillText(S.rate.toFixed(1)+" calls/s",X+8,h/2-6);
+      x.fillStyle=css("--tx3"); x.font="10px "+css("--mono");
+      x.fillText(S.done+" total",X+8,h/2+10);
+      x.font="10px "+css("--mono");
+    }
+  });
+}
+function dots(x,X,W,h,n,col){
+  if(!n) return;
+  const top=30,bot=h-14,ah=bot-top;
+  let r=4,gap=3;
+  while(true){const cols=Math.max(1,Math.floor((W-8)/(2*r+gap))),rows=Math.ceil(n/cols);
+    if(rows*(2*r+gap)<=ah||r<=1.2)break; r-=0.4;}
+  const cols=Math.max(1,Math.floor((W-8)/(2*r+gap)));
+  x.fillStyle=col();
+  for(let i=0;i<n;i++){
+    const cx=X+6+r+(i%cols)*(2*r+gap), cy=top+r+Math.floor(i/cols)*(2*r+gap);
+    if(cy>bot) {x.fillStyle=css("--tx3");x.fillText("+"+(n-i),X+6,bot+10);break;}
+    x.beginPath();x.arc(cx,cy,r,0,7);x.fill();
+  }
+}
+function slots(x,X,W,h,C){
+  const R=S.reps.length, top=30, bot=h-14;
+  const bw=(W-8-(R-1)*6)/R;
+  S.reps.forEach((r,ri)=>{
+    const bx=X+6+ri*(bw+6);
+    x.fillStyle=css("--tx3"); x.fillText("R"+ri+" · "+r.run.length+"/"+C.effSeqs,bx,bot+10);
+    const n=C.effSeqs, ah=bot-top-6;
+    const cols=Math.max(1,Math.min(8,Math.ceil(Math.sqrt(n*bw/Math.max(1,ah)))));
+    const rows=Math.ceil(n/cols);
+    const sw=(bw-(cols-1)*3)/cols, sh=Math.max(3,Math.min(14,(ah-(rows-1)*3)/rows));
+    for(let i=0;i<n && (Math.floor(i/cols)+1)*(sh+3)<=ah;i++){
+      const sx=bx+(i%cols)*(sw+3), sy=top+Math.floor(i/cols)*(sh+3);
+      x.fillStyle="#141a26"; x.fillRect(sx,sy,sw,sh);
+      const c=r.run[i];
+      if(c){
+        const f=c.phase==="prefill"?0.92*(1-c.rem/c.init):0.92+0.08*(1-c.rem/c.init);
+        x.fillStyle=c.phase==="prefill"?css("--prefill"):css("--decode");
+        x.fillRect(sx,sy,Math.max(1,sw*Math.min(1,Math.max(0,f))),sh);
+      }
+    }
+  });
+}
+function spark(id,arr,fmt,color){
+  const [x,w,h]=fit(document.getElementById(id),120);
+  if(arr.length<2) return;
+  const mx=Math.max(...arr)*1.15||1, mn=0;
+  x.strokeStyle=css("--line"); x.beginPath();
+  for(let i=1;i<4;i++){const y=h-6-(h-22)*i/4;x.moveTo(0,y);x.lineTo(w,y);} x.stroke();
+  x.strokeStyle=color; x.lineWidth=1.6; x.beginPath();
+  arr.forEach((v,i)=>{const px=i/(arr.length-1)*(w-4)+2, py=h-6-(h-22)*((v-mn)/(mx-mn));
+    i?x.lineTo(px,py):x.moveTo(px,py);});
+  x.stroke();
+  x.fillStyle=color+"22"; x.lineTo(w-2,h-6); x.lineTo(2,h-6); x.fill();
+  x.fillStyle=css("--tx2"); x.font="11px "+css("--mono");
+  x.fillText(fmt(arr[arr.length-1]),4,12);
+  x.fillStyle=css("--tx3"); x.textAlign="right"; x.fillText("max "+fmt(Math.max(...arr)),w-4,12); x.textAlign="left";
+}
+function tile(k,v,s,cls){return '<div class="tile"><div class="k">'+k+'</div><div class="v '+(cls||"")+'">'+v+(s?' <small>'+s+'</small>':'')+'</div></div>';}
+function renderUI(C){
+  let q=0,b=0; for(const r of S.reps){q+=r.q.length;b+=r.run.length;}
+  const p50=pct(S.turn,50)*1000, p95=pct(S.turn,95)*1000;
+  const sloPct=S.turns?100*(1-S.over/S.turns):100;
+  const blocked=S.sessions.filter(s=>s.st==="wait").length;
+  const aw=S.qw.length?S.qw.reduce((a,c)=>a+c,0)/S.qw.length*1000:0;
+  const as=S.sv.length?S.sv.reduce((a,c)=>a+c,0)/S.sv.length*1000:0;
+  document.getElementById("clock").textContent="t = "+S.t.toFixed(0)+"s";
+  document.getElementById("stats").innerHTML=
+    tile("p50 turn latency",p50.toFixed(0),"ms")+
+    tile("p95 turn latency",p95.toFixed(0),"ms",p95>P.slo?"bad":"good")+
+    tile("within SLO",Math.max(0,Math.min(100,sloPct)).toFixed(1),"%",sloPct<95?"warnc":"good")+
+    tile("queue depth",q,"calls",q>b?"warnc":"")+
+    tile("batch occupancy",b,"/ "+(C.effSeqs*S.reps.length))+
+    tile("throughput",S.rate.toFixed(1),"calls/s")+
+    tile("token rate",(S.tokRate/1000).toFixed(1),"k tok/s")+
+    tile("queue wait",aw.toFixed(0),"ms avg")+
+    tile("service time",as.toFixed(0),"ms avg")+
+    tile("sessions blocked",blocked,"/ "+S.sessions.length);
+
+  document.getElementById("gpus").innerHTML=S.reps.map((r,i)=>{
+    const vr=Math.min(100,100*(C.wPerGpu+ (r.run.length*(P.promptTok+P.outTok)*C.kvkb*1024/1e9)/P.tp)/C.g.vram);
+    return '<div class="rep"><div class="rh"><span>replica '+i+'</span><span>'+P.tp+'× '+selGpu.value.split(" ")[0]+'</span></div>'+
+      '<div class="blab"><span>busy</span><span>'+(r.busy*100).toFixed(0)+'%</span></div><div class="bar"><i style="width:'+(r.busy*100)+'%"></i></div>'+
+      '<div class="blab"><span>eff of peak</span><span>'+(r.eff*100).toFixed(0)+'%</span></div><div class="bar"><i style="width:'+(r.eff*100)+'%;background:'+(r.eff<0.35?css("--warn"):css("--ok"))+'"></i></div>'+
+      '<div class="blab"><span>VRAM/GPU</span><span>'+vr.toFixed(0)+'%</span></div><div class="bar"><i style="width:'+vr+'%;background:'+css("--prefill")+'"></i></div></div>';
+  }).join("");
+
+  document.getElementById("derived").innerHTML=
+    (C.oom?'<div class="bad">⚠ weights do not fit: '+C.wPerGpu.toFixed(1)+' GB/GPU &gt; '+C.usable.toFixed(1)+' GB usable → raise TP or quantise harder</div>':'')+
+    'weights <b>'+C.wGB.toFixed(1)+' GB</b> → <b>'+C.wPerGpu.toFixed(1)+' GB/GPU</b> @ TP'+P.tp+'<br>'+
+    'KV pool <b>'+C.kvTotal.toFixed(1)+' GB</b> = <b class="hl">'+(C.kvTok/1000).toFixed(0)+'k tokens</b><br>'+
+    'KV-limited concurrency <b>'+C.seqsByKv+'</b> seqs @ '+(P.promptTok+P.outTok)+' tok<br>'+
+    'effective concurrency <b class="hl">'+C.effSeqs+'</b> ('+(C.seqsByKv<P.maxSeqs?"KV-bound":"max_num_seqs-bound")+')<br>'+
+    'prefill <b>'+(C.prefill1/1000).toFixed(1)+'k tok/s</b> single · ceiling <b>'+(C.peakTok/1000).toFixed(1)+'k tok/s</b><br>'+
+    'decode <b>'+C.decode1.toFixed(0)+' tok/s</b> single stream<br>'+
+    'service time at B=1 <b class="hl">'+(C.svc1*1000).toFixed(0)+' ms</b> ('+(100*P.promptTok/C.prefill1/C.svc1).toFixed(0)+'% prefill)<br>'+
+    'offered load <b>'+(S.sessions.length*P.claims/(P.think+P.draft+C.svc1)).toFixed(1)+' calls/s</b> (unqueued estimate)<br>'+
+    'capacity ≈ <b>'+(C.peakTok/(P.promptTok+P.outTok)*S.reps.length).toFixed(1)+' calls/s</b> across '+S.reps.length+' replica(s)';
+
+  spark("cLat",S.hist.lat,v=>v.toFixed(0)+"ms",css("--acc"));
+  spark("cQ",S.hist.q,v=>v.toFixed(0),css("--queue"));
+  spark("cTp",S.hist.tp,v=>v.toFixed(1)+"/s",css("--ok"));
+  spark("cB",S.hist.b,v=>v.toFixed(0),css("--prefill"));
+}
+
+/* ---------- tooltips ---------- */
+const tipEl=document.createElement("div"); tipEl.id="tip"; document.body.appendChild(tipEl);
+document.addEventListener("mouseover",e=>{
+  const q=e.target.closest&&e.target.closest(".q"); if(!q) return;
+  tipEl.textContent=q.dataset.tip; tipEl.classList.add("on");
+  const r=q.getBoundingClientRect();
+  tipEl.style.left=Math.max(6,Math.min(innerWidth-tipEl.offsetWidth-6,r.left+18))+"px";
+  tipEl.style.top=Math.max(6,Math.min(innerHeight-tipEl.offsetHeight-6,r.top+16))+"px";
+});
+document.addEventListener("mouseout",e=>{ if(e.target.closest&&e.target.closest(".q")) tipEl.classList.remove("on"); });
+
+/* ---------- loop ---------- */
+let running=true,last=performance.now();
+document.getElementById("bPlay").onclick=e=>{running=!running;e.target.textContent=running?"Pause":"Play";e.target.classList.toggle("on",running);};
+document.getElementById("bReset").onclick=reset;
+document.getElementById("seed").onchange=reset;
+const sp=document.getElementById("speed");
+sp.oninput=()=>document.getElementById("vSpeed").textContent=sp.value+"x";
+reset();
+function frame(now){
+  const real=Math.min(0.05,(now-last)/1000); last=now;
+  const C=cfg();
+  syncStruct(false);
+  if(running && !C.oom){
+    const dt=0.01, want=real*parseFloat(sp.value);
+    const steps=Math.min(400,Math.round(want/dt));
+    const before=S.done;
+    for(let i=0;i<steps;i++) step(dt,C);
+    const simT=steps*dt;
+    if(simT>0) S.rate+=(((S.done-before)/simT)-S.rate)*Math.min(1,simT/1.0);
+  }
+  drawFlow(C); renderUI(C);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
