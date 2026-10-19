@@ -158,7 +158,7 @@ const QUANTS = {"bf16 (2 B/param)":2, "fp8 (1 B/param)":1, "int4 awq/gptq (0.5 B
 
 /* ---------- knobs ---------- */
 const KNOBS = [
-  ["workload","sessions","Concurrent sessions",1,2000,1,300,"",
+  ["workload","sessions","Concurrent sessions",1,2000,1,100,"",
    "Chat sessions live at once. Closed loop: each session thinks, sends one turn, waits for the guardrail, thinks again — so if the server slows down, arrivals slow down too instead of piling up forever."],
   ["workload","think","Mean think time",1,120,1,20,"s",
    "Mean seconds a user spends reading the answer and typing the next message, exponentially distributed. Shorter think time = more turns/s from the same number of users. This is the main load dial."],
@@ -166,12 +166,12 @@ const KNOBS = [
    "Seconds the chatbot LLM takes to write the draft answer, before the guardrail sees it. Served elsewhere, so it costs no GPU here — it delays arrivals and adds to what the user feels on top of the guardrail."],
   ["workload","claims","Guardrail calls / turn",1,8,1,1,"",
    "Calls per chatbot turn. 1 = check the whole answer in one prompt. Higher = split the answer into claims and check each in parallel: load multiplies, and the turn ends only when the slowest call returns, so the tail gets worse faster than the mean."],
-  ["workload","promptTok","Median prompt tokens",200,64000,100,1500,"tok",
+  ["workload","promptTok","Median prompt tokens",200,64000,100,32000,"tok",
    "Median size of one guardrail prompt: question + retrieved context + draft answer. Spread is lognormal (sigma 0.45). Prefill cost grows linearly with it, and so does KV cache per sequence — at long context the KV pool, not max_num_seqs, caps concurrency."],
-  ["workload","outTok","Output tokens (verdict)",1,64,1,8,"tok",
+  ["workload","outTok","Output tokens (verdict)",1,64,1,16,"tok",
    "Tokens the guardrail generates — a verdict, maybe a score or span. Tiny by design, which is why this workload is prefill-dominated. Raise it if you want an explanation back and watch decode take over the service time."],
-  ["workload","slo","SLO budget",50,3000,25,400,"ms",
-   "Latency budget for the user-facing turn: first guardrail call enqueued until the last one finishes. Scores the within-SLO tile only; it does not change the simulation."],
+  ["workload","slo","Guardrail SLO",50,3000,25,1000,"ms",
+   "Latency budget for the guardrail step alone, not the whole user response: first guardrail call enqueued until the last one finishes, queue wait included. Think and chatbot draft time are excluded. Scored at p95; it does not change the simulation."],
   ["hw","replicas","Replicas (data parallel)",1,8,1,1,"",
    "Independent vLLM instances, each with its own GPUs, behind a least-loaded balancer. Buys throughput; a single call is no faster. Total GPUs = replicas × TP."],
   ["hw","tp","Tensor parallel / replica",1,8,1,1,"GPU",
@@ -212,8 +212,8 @@ function fillSel(id,obj,def){
   for (const k of Object.keys(obj)){const o=document.createElement("option");o.value=k;o.textContent=k;s.appendChild(o);}
   s.value=def; return s;
 }
-const selModel=fillSel("model",MODELS,"Gemma 4 E2B (~5B raw / 2B active)");
-const selGpu=fillSel("gpu",GPUS,"L40S 48GB");
+const selModel=fillSel("model",MODELS,"Gemma 4 E4B (~8B raw / 4B active)");
+const selGpu=fillSel("gpu",GPUS,"H100 80GB SXM");
 const selQuant=fillSel("quant",QUANTS,"bf16 (2 B/param)");
 const inRaw=document.getElementById("pRaw"), inAct=document.getElementById("pAct"), inKv=document.getElementById("pKv");
 function applyModelPreset(){const m=MODELS[selModel.value];inRaw.value=m.raw;inAct.value=m.act;inKv.value=m.kvkb;}
@@ -419,8 +419,8 @@ function renderUI(C){
   const as=S.sv.length?S.sv.reduce((a,c)=>a+c,0)/S.sv.length*1000:0;
   document.getElementById("clock").textContent="t = "+S.t.toFixed(0)+"s";
   document.getElementById("stats").innerHTML=
-    tile("p50 turn latency",p50.toFixed(0),"ms")+
-    tile("p95 turn latency",p95.toFixed(0),"ms",p95>P.slo?"bad":"good")+
+    tile("p50 guardrail latency",p50.toFixed(0),"ms")+
+    tile("p95 guardrail latency",p95.toFixed(0),"ms",p95>P.slo?"bad":"good")+
     tile("within SLO",Math.max(0,Math.min(100,sloPct)).toFixed(1),"%",sloPct<95?"warnc":"good")+
     tile("queue depth",q,"calls",q>b?"warnc":"")+
     tile("batch occupancy",b,"/ "+(C.effSeqs*S.reps.length))+

@@ -35,7 +35,7 @@ Four layers, in file order: presets (`GPUS`, `MODELS`, `QUANTS`) → knob table 
 
 **Batching** uses one saturating curve, per request: `rate(B) = single · (k+1) / (B + k)`. `kp` (prefill) is small because one long prompt already saturates compute; `kd` (decode) is large because the batch shares one weight read. Both facts — aggregate throughput rises with B, per-request speed falls — must survive any change here.
 
-**`step()`** advances sessions (`think → draft → wait`) and, per replica, admits from the queue up to effective concurrency, then burns token budget: `prefill` until `rem <= 0`, then `decode`, then completion. Latency is recorded per call (enqueue → finish) and per turn (max over the turn's calls, since a fanned-out turn ends with its slowest call) — the SLO tile scores turns, because that is what a user feels.
+**`step()`** advances sessions (`think → draft → wait`) and, per replica, admits from the queue up to effective concurrency, then burns token budget: `prefill` until `rem <= 0`, then `decode`, then completion. Latency is recorded per call (enqueue → finish) and per turn (max over the turn's calls, since a fanned-out turn ends with its slowest call) — the SLO tile scores turns. The SLO (default 1 s, p95) budgets the **guardrail step only** — enqueue of the first call to finish of the last, queue wait included, chatbot draft and think time excluded — not the full user-facing response.
 
 Model presets are **approximations**, deliberately overridable in the UI: `raw` is weights resident in HBM, `act` is parameters touched per token, `kvkb` is KV bytes per token at fp16. "Effective parameter" names (E2B/E4B) understate resident bytes, so never derive weight size from a model's name.
 
