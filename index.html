@@ -133,6 +133,14 @@ canvas{display:block;width:100%}
     <div class="card"><h3>Throughput (calls/s)</h3><canvas id="cTp" height="120"></canvas></div>
     <div class="card"><h3>Batch occupancy (running calls)</h3><canvas id="cB" height="120"></canvas></div>
   </div>
+  <div class="card">
+    <h3>Sessions in guardrail (60 s running mean)<span class="q" data-tip="Sessions blocked on the guardrail — a turn has been sent and its slowest call has not returned yet. Measured = time-average of that count over the last 60 s. Little's Law: L = λ·W, with λ = turns completed per second and W = mean guardrail turn latency over the same window. The two lines agree in steady state; they part while the queue is growing or draining, because turns still in flight are counted in L but not yet in λ·W.">?</span></h3>
+    <canvas id="cSes" height="120"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--acc)"></i>measured</span>
+      <span><i style="background:var(--tx2)"></i>Little's Law λ·W</span>
+    </div>
+  </div>
 </main>
 </div>
 <script>
@@ -259,7 +267,8 @@ let S;
 function reset(){
   srand(parseInt(document.getElementById("seed").value)||7);
   S={t:0,sessions:[],reps:[],lat:[],turn:[],qw:[],sv:[],done:0,over:0,turns:0,rate:0,tokRate:0,
-     hist:{lat:[],q:[],tp:[],b:[]},nextSample:0};
+     waitInt:0,turnLatSum:0,win:[],
+     hist:{lat:[],q:[],tp:[],b:[],ses:[],lw:[]},nextSample:0};
   syncStruct(true);
 }
 function mkSession(){return {st:"think",timer:rnd()*P.think,pending:0,tTurn:0,worst:0};}
@@ -309,7 +318,7 @@ function step(dt,C){
           S.done++;
           const s=c.s; s.worst=Math.max(s.worst,lat);
           if(--s.pending<=0){ s.st="think"; s.timer=expo(P.think);
-            push(S.turn,s.worst); S.turns++; if(s.worst*1000>P.slo) S.over++; }
+            push(S.turn,s.worst); S.turns++; S.turnLatSum+=s.worst; if(s.worst*1000>P.slo) S.over++; }
         } }
     }
     r.busy+= ((B>0?1:0)-r.busy)*Math.min(1,dt/0.3);
@@ -317,11 +326,19 @@ function step(dt,C){
     totalAch+=ach;
   }
   S.tokRate+=(totalAch-S.tokRate)*Math.min(1,dt/0.3);
+  let nWait=0; for(const s of S.sessions) if(s.st==="wait") nWait++;
+  S.waitInt+=nWait*dt;
   // sampled history
   if(S.t>=S.nextSample){
     S.nextSample=S.t+0.25;
     let q=0,b=0; for(const r of S.reps){q+=r.q.length;b+=r.run.length;}
     push(S.hist.lat,pct(S.turn,95)*1000); push(S.hist.q,q); push(S.hist.tp,S.rate); push(S.hist.b,b);
+    // 60 s window of cumulative counters: L measured = mean blocked sessions, Little's Law = λ·W
+    S.win.push({t:S.t,wi:S.waitInt,n:S.turns,ls:S.turnLatSum});
+    while(S.win.length>2 && S.win[1].t<=S.t-60) S.win.shift();
+    const w0=S.win[0], T=S.t-w0.t, dn=S.turns-w0.n;
+    const lam=T>0?dn/T:0, W=dn?(S.turnLatSum-w0.ls)/dn:0;
+    push(S.hist.ses,T>0?(S.waitInt-w0.wi)/T:0); push(S.hist.lw,lam*W);
   }
 }
 function pct(a,p){ if(!a.length) return 0; const b=[...a].sort((x,y)=>x-y); return b[Math.min(b.length-1,Math.floor(p/100*b.length))]; }
@@ -394,20 +411,35 @@ function slots(x,X,W,h,C){
     }
   });
 }
-function spark(id,arr,fmt,color){
+// o.ref: fixed horizontal reference line (o.refLabel); o.arr2/o.color2/o.label2: dashed second series
+function spark(id,arr,fmt,color,o={}){
   const [x,w,h]=fit(document.getElementById(id),120);
   if(arr.length<2) return;
-  const mx=Math.max(...arr)*1.15||1, mn=0;
+  const mx=Math.max(...arr,...(o.arr2||[]),o.ref||0)*1.15||1, mn=0;
+  const Y=v=>h-6-(h-22)*((v-mn)/(mx-mn));
   x.strokeStyle=css("--line"); x.beginPath();
   for(let i=1;i<4;i++){const y=h-6-(h-22)*i/4;x.moveTo(0,y);x.lineTo(w,y);} x.stroke();
   x.strokeStyle=color; x.lineWidth=1.6; x.beginPath();
-  arr.forEach((v,i)=>{const px=i/(arr.length-1)*(w-4)+2, py=h-6-(h-22)*((v-mn)/(mx-mn));
+  arr.forEach((v,i)=>{const px=i/(arr.length-1)*(w-4)+2, py=Y(v);
     i?x.lineTo(px,py):x.moveTo(px,py);});
   x.stroke();
   x.fillStyle=color+"22"; x.lineTo(w-2,h-6); x.lineTo(2,h-6); x.fill();
-  x.fillStyle=css("--tx2"); x.font="11px "+css("--mono");
-  x.fillText(fmt(arr[arr.length-1]),4,12);
-  x.fillStyle=css("--tx3"); x.textAlign="right"; x.fillText("max "+fmt(Math.max(...arr)),w-4,12); x.textAlign="left";
+  x.font="11px "+css("--mono");
+  if(o.arr2&&o.arr2.length>1){
+    x.strokeStyle=o.color2; x.setLineDash([5,3]); x.beginPath();
+    o.arr2.forEach((v,i)=>{const px=i/(o.arr2.length-1)*(w-4)+2; i?x.lineTo(px,Y(v)):x.moveTo(px,Y(v));});
+    x.stroke(); x.setLineDash([]);
+  }
+  if(o.ref!=null){
+    const y=Y(o.ref);
+    x.strokeStyle=css("--bad"); x.lineWidth=1; x.setLineDash([4,4]); x.beginPath(); x.moveTo(0,y); x.lineTo(w,y); x.stroke(); x.setLineDash([]);
+    x.fillStyle=css("--bad"); x.textAlign="right"; x.fillText(o.refLabel,w-4,y-4); x.textAlign="left";
+  }
+  const cur=fmt(arr[arr.length-1]);
+  x.fillStyle=css("--tx2"); x.fillText(cur,4,12);
+  if(o.arr2&&o.arr2.length) { x.fillStyle=o.color2; x.fillText("  "+o.label2+" "+fmt(o.arr2[o.arr2.length-1]),4+x.measureText(cur).width,12); }
+  const avg=arr.reduce((a,c)=>a+c,0)/arr.length;
+  x.fillStyle=css("--tx3"); x.textAlign="right"; x.fillText("avg "+fmt(avg)+" · max "+fmt(Math.max(...arr)),w-4,12); x.textAlign="left";
 }
 function tile(k,v,s,cls){return '<div class="tile"><div class="k">'+k+'</div><div class="v '+(cls||"")+'">'+v+(s?' <small>'+s+'</small>':'')+'</div></div>';}
 function renderUI(C){
@@ -450,10 +482,11 @@ function renderUI(C){
     'offered load <b>'+(S.sessions.length*P.claims/(P.think+P.draft+C.svc1)).toFixed(1)+' calls/s</b> (unqueued estimate)<br>'+
     'capacity ≈ <b>'+(C.peakTok/(P.promptTok+P.outTok)*S.reps.length).toFixed(1)+' calls/s</b> across '+S.reps.length+' replica(s)';
 
-  spark("cLat",S.hist.lat,v=>v.toFixed(0)+"ms",css("--acc"));
+  spark("cLat",S.hist.lat,v=>v.toFixed(0)+"ms",css("--acc"),{ref:P.slo,refLabel:"SLO "+P.slo+"ms"});
   spark("cQ",S.hist.q,v=>v.toFixed(0),css("--queue"));
   spark("cTp",S.hist.tp,v=>v.toFixed(1)+"/s",css("--ok"));
   spark("cB",S.hist.b,v=>v.toFixed(0),css("--prefill"));
+  spark("cSes",S.hist.ses,v=>v.toFixed(1),css("--acc"),{arr2:S.hist.lw,color2:css("--tx2"),label2:"λ·W"});
 }
 
 /* ---------- tooltips ---------- */
