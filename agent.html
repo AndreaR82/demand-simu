@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Coding Agent Load Simulator</title>
+<style>
+:root{
+  --bg:#0c0f14; --panel:#131821; --panel2:#1a2130; --line:#242d3d;
+  --tx:#e6edf7; --tx2:#93a1b8; --tx3:#5d6b82;
+  --acc:#5aa9ff; --ok:#3ecf8e; --warn:#f5b949; --bad:#ff6b6b;
+  --prefill:#7c6cff; --decode:#3ecf8e; --queue:#f5b949; --cold:#ff5c8a;
+  --review:#202838; --tool:#3d7fd1; --sub:#2a6f78;
+  --kvrun:#4fc3f7; --kvidle:#b48cff; --kvbase:#7d8aa3;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--tx);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+#app{display:grid;grid-template-columns:286px 1fr;height:100vh;overflow:hidden}
+aside{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:12px}
+main{overflow-y:auto;padding:14px 16px 28px;display:flex;flex-direction:column;gap:14px}
+h1{font-size:14px;margin:0 0 2px;letter-spacing:.2px}
+.sub{color:var(--tx3);font-size:11px;margin-bottom:12px}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.9px;color:var(--tx3);margin:16px 0 8px;font-weight:600}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px}
+label{font-size:12px;color:var(--tx2)}
+.val{font:11px/1 var(--mono);color:var(--tx);background:var(--panel2);padding:3px 6px;border-radius:4px;min-width:52px;text-align:right}
+input[type=range]{width:100%;accent-color:var(--acc);height:16px}
+input[type=checkbox]{accent-color:var(--acc);width:15px;height:15px;margin:0}
+select,input[type=number]{width:100%;background:var(--panel2);color:var(--tx);border:1px solid var(--line);border-radius:5px;padding:5px 6px;font:12px var(--mono)}
+.ctl{margin-bottom:11px}
+.btns{display:flex;gap:6px;margin-bottom:6px}
+button{flex:1;background:var(--panel2);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:7px 8px;font-size:12px;cursor:pointer}
+button:hover{border-color:var(--acc);color:#fff}
+button.on{background:var(--acc);border-color:var(--acc);color:#04121f;font-weight:600}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+.card h3{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.9px;color:var(--tx3);font-weight:600}
+canvas{display:block;width:100%}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px}
+.tile{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.tile .k{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--tx3)}
+.tile .v{font:18px/1.25 var(--mono);margin-top:3px}
+.tile .v small{font-size:11px;color:var(--tx3)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:1100px){.grid2{grid-template-columns:1fr}}
+.gpus{display:flex;flex-wrap:wrap;gap:10px}
+.rep{border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--panel2);min-width:170px;flex:1}
+.rep .rh{display:flex;justify-content:space-between;font:10px var(--mono);color:var(--tx3);margin-bottom:6px}
+.bar{height:7px;background:#0c1017;border-radius:4px;overflow:hidden;margin:3px 0 7px;display:flex}
+.bar i{display:block;height:100%;width:0;background:var(--acc);flex:none}
+.bar.ev{box-shadow:0 0 0 1px var(--bad)}
+.blab{display:flex;justify-content:space-between;font:9px var(--mono);color:var(--tx3)}
+.derived{font:11px/1.7 var(--mono);color:var(--tx2)}
+.derived b{color:var(--tx);font-weight:500}
+.derived .hl{color:var(--acc)}
+.note{font-size:11px;color:var(--tx3);line-height:1.5}
+.legend{display:flex;gap:12px;font:10px var(--mono);color:var(--tx3);margin-top:8px;flex-wrap:wrap}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.q{display:inline-flex;align-items:center;justify-content:center;width:13px;height:13px;border-radius:50%;border:1px solid var(--line);color:var(--tx3);font-size:9px;cursor:help;margin-left:5px;vertical-align:1px;flex:none}
+.q:hover{border-color:var(--acc);color:var(--acc)}
+#tip{position:fixed;z-index:99;max-width:300px;background:#080c13;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:11.5px;line-height:1.55;color:var(--tx2);box-shadow:0 10px 28px #000a;pointer-events:none;opacity:0;transition:opacity .09s}
+#tip.on{opacity:1}
+.h3sel{float:right;width:auto;padding:2px 4px;font-size:10px;text-transform:none;letter-spacing:0}
+.good{color:var(--ok)}.bad{color:var(--bad)}.warnc{color:var(--warn)}
+</style>
+</head>
+<body>
+<div id="app">
+<aside>
+  <h1>Coding Agent Load Simulator</h1>
+  <div class="sub">Closed-loop engineers · Claude Code-style agent on vLLM · <a href="index.html">guardrail sim →</a></div>
+
+  <div class="btns">
+    <button id="bPlay" class="on">Pause</button>
+    <button id="bReset">Reset</button>
+  </div>
+  <div class="row"><label>Speed <span class="q" data-tip="Simulated seconds per real second. Tasks take minutes, so crank it to reach steady state (~10 simulated minutes), then drop it to watch single calls in the watched rows.">?</span></label><span class="val" id="vSpeed">20x</span></div>
+  <input type="range" autocomplete="off" id="speed" min="1" max="200" step="1" value="20">
+
+  <h2>Engineers</h2>
+  <div id="knobsEng"></div>
+
+  <h2>Agent loop</h2>
+  <div id="knobsLoop"></div>
+  <div class="row"><label for="keep">Keep thinking in context <span class="q" data-tip="On: thinking tokens stay in the conversation history (interleaved thinking), so the context grows by thinking + call + result every step and the whole output stays a cache hit. Off: the harness strips old thinking, so the context grows by call + result only — but the cached prefix then breaks where the thinking started.">?</span></label><input type="checkbox" id="keep" autocomplete="off"></div>
+
+  <h2>Subagents</h2>
+  <div id="knobsSub"></div>
+
+  <h2>Targets</h2>
+  <div id="knobsSlo"></div>
+
+  <h2>Model &amp; quantisation</h2>
+  <div class="ctl"><div class="row"><label>Model preset <span class="q" data-tip="Coding models, mostly MoE. Presets are approximations — override the three numbers below with your own. Weight read per forward pass grows from active towards raw params as the batch gets bigger, because a batch of tokens touches the union of their experts.">?</span></label></div><select id="model" autocomplete="off"></select></div>
+  <div class="row"><label>Raw params (B) <span class="q" data-tip="Parameters resident in HBM, in billions: all experts. Sets VRAM use and the weight read of a big batch.">?</span></label><input type="number" autocomplete="off" id="pRaw" step="0.1" style="width:76px"></div>
+  <div class="row"><label>Active/token (B) <span class="q" data-tip="Parameters one token touches, in billions. Sets FLOPs per token, and the weight read at batch 1. Equal to raw for a dense model.">?</span></label><input type="number" autocomplete="off" id="pAct" step="0.1" style="width:76px"></div>
+  <div class="row"><label>KV KB/token <span class="q" data-tip="KV cache KB per token at fp16: 2 × layers × kv_heads × head_dim × 2 bytes (less with sliding-window or MLA layers). At 60k context this, not the weights, decides how many sessions fit and how fast decode runs.">?</span></label><input type="number" autocomplete="off" id="pKv" step="1" style="width:76px"></div>
+  <div class="ctl"><div class="row"><label>Weight quantisation <span class="q" data-tip="Bytes per weight. Shrinks VRAM (bigger KV pool) and the weight read per decode step. Treated as bytes only: FLOPs are unchanged, use Model FLOPs util if your kernels run faster.">?</span></label></div><select id="quant" autocomplete="off"></select></div>
+  <div class="ctl"><div class="row"><label>KV cache dtype <span class="q" data-tip="--kv-cache-dtype. fp8 halves KV bytes: twice the tokens fit in the pool (more cache hits, more concurrency) and every decode step reads half as much KV. At long context often a bigger lever than weight quantisation.">?</span></label></div><select id="kvdt" autocomplete="off"></select></div>
+
+  <h2>Hardware</h2>
+  <div class="ctl"><div class="row"><label>GPU <span class="q" data-tip="HBM bandwidth sets decode speed (weights + KV read every pass), dense bf16 TFLOPS sets prefill speed, VRAM sets the KV pool left after the weights.">?</span></label></div><select id="gpu" autocomplete="off"></select></div>
+  <div id="knobsHw"></div>
+
+  <h2>Serving config</h2>
+  <div class="ctl"><div class="row"><label>Router <span class="q" data-tip="How calls pick a replica. least-loaded: fewest queued+running calls, ignores the cache — a session's prefix is usually on another replica. sticky: each session pinned to one replica by hash, best hit rate, no load balancing. cache-aware: go where the prefix is cached unless that replica's queue is past the spill threshold (llm-d / Dynamo style). All three are the same with one replica.">?</span></label></div><select id="router" autocomplete="off"></select></div>
+  <div class="row"><label for="apc">Prefix caching (APC) <span class="q" data-tip="--enable-prefix-caching. On: a call only prefills tokens past the longest prefix still in the KV pool; idle sessions' prefixes stay cached between calls and are evicted LRU when space is needed. Off: every call prefills its whole context, base prefix included.">?</span></label><input type="checkbox" id="apc" checked autocomplete="off"></div>
+  <div id="knobsServe"></div>
+
+  <h2>Efficiency assumptions</h2>
+  <div id="knobsEff"></div>
+
+  <h2>Seed</h2>
+  <div class="row"><label>RNG seed <span class="q" data-tip="Same seed + same knobs = identical run. Change one parameter at a time with the seed fixed to compare honestly.">?</span></label><input type="number" autocomplete="off" id="seed" value="7" style="width:76px"></div>
+</aside>
+
+<main>
+  <div class="card">
+    <h3>Session timeline <span id="clock" style="float:right;font-family:var(--mono);color:var(--tx2);text-transform:none;letter-spacing:0;margin-left:10px">t = 0s</span>
+      <select id="win" class="h3sel" autocomplete="off"><option value="120">2 min</option><option value="600" selected>10 min</option><option value="1800">30 min</option></select></h3>
+    <canvas id="gantt" height="480"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--review);box-shadow:0 0 0 1px var(--line)"></i>reviewing</span>
+      <span><i style="background:var(--tool)"></i>tool run</span>
+      <span><i style="background:var(--queue)"></i>queued</span>
+      <span><i style="background:var(--prefill)"></i>prefill (warm)</span>
+      <span><i style="background:var(--cold)"></i>prefill (cache miss)</span>
+      <span><i style="background:var(--decode)"></i>decode</span>
+      <span><i style="background:var(--sub)"></i>waiting on subagents</span>
+      <span><i style="background:var(--bad);width:2px"></i>prefix evicted</span>
+    </div>
+    <div class="note" style="margin-top:6px">Top: the first 12 sessions at full height, subagents as thin stripes under their parent, current context size on the left. Bottom: every session, one row each, squeezed to fit — yellow spreading across rows is queueing, pink is cache thrash.</div>
+  </div>
+
+  <div class="tiles" id="stats"></div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>GPUs</h3>
+      <div class="gpus" id="gpus"></div>
+      <div class="note" style="margin-top:10px">HBM / FLOPs = share of each forward pass spent reading memory vs computing; the larger one is the bound, the rest is fixed overhead. KV pool: <span style="color:var(--kvrun)">running</span> · <span style="color:var(--kvidle)">idle cached prefixes</span> · <span style="color:var(--kvbase)">shared base</span> · free. Red outline = evicted in the last 2 s.</div>
+    </div>
+    <div class="card">
+      <h3>Derived config</h3>
+      <div class="derived" id="derived"></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card"><h3>Task slowdown p95 (x)</h3><canvas id="cSlow" height="120"></canvas></div>
+    <div class="card"><h3>TTFT p95</h3><canvas id="cTtft" height="120"></canvas></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><h3>Decode speed per stream (tok/s)</h3><canvas id="cTps" height="120"></canvas>
+      <div class="legend"><span><i style="background:var(--ok)"></i>p50</span><span><i style="background:var(--tx2)"></i>p5</span></div></div>
+    <div class="card"><h3>Cache hit (% of prompt tokens, 60 s)</h3><canvas id="cHit" height="120"></canvas></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><h3>KV pool composition (all replicas)</h3><canvas id="cKv" height="120"></canvas>
+      <div class="legend"><span><i style="background:var(--kvrun)"></i>running</span><span><i style="background:var(--kvidle)"></i>idle cached</span><span><i style="background:var(--kvbase)"></i>shared base</span><span><i style="background:var(--panel2)"></i>free</span></div></div>
+    <div class="card"><h3>Queue depth (calls waiting)</h3><canvas id="cQ" height="120"></canvas></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><h3>Token throughput (tok/s)</h3><canvas id="cTp" height="120"></canvas>
+      <div class="legend"><span><i style="background:var(--prefill)"></i>prefill</span><span><i style="background:var(--decode)"></i>decode</span></div></div>
+    <div class="card"><h3>Batch occupancy (running calls)</h3><canvas id="cB" height="120"></canvas></div>
+  </div>
+</main>
+</div>
+<script>
+"use strict";
+/* ---------- presets (approximate; edit the number fields to match your own measurements) ---------- */
+const GPUS = {
+  "H100 80GB SXM": {vram:80,  bw:3350, tflops:989},
+  "H200 141GB":    {vram:141, bw:4800, tflops:989},
+  "B200 192GB":    {vram:192, bw:8000, tflops:2250},
+  "MI300X 192GB":  {vram:192, bw:5300, tflops:1307},
+  "A100 80GB":     {vram:80,  bw:2039, tflops:312},
+  "L40S 48GB":     {vram:48,  bw:864,  tflops:362},
+  "L4 24GB":       {vram:24,  bw:300,  tflops:121},
+  "RTX 4090 24GB": {vram:24,  bw:1008, tflops:165},
+};
+// raw = bytes-resident param count, act = params touched per token, kvkb = KV cache KB/token @fp16
+const MODELS = {
+  "MiniMax-M2 (230B / 10B active)":      {raw:230,  act:10,  kvkb:248},
+  "Qwen3-Coder-480B-A35B":               {raw:480,  act:35,  kvkb:248},
+  "GLM-4.6 (355B / 32B active)":         {raw:355,  act:32,  kvkb:368},
+  "Qwen3-Coder-30B-A3B":                 {raw:30.5, act:3.3, kvkb:96},
+  "gpt-oss-120b (117B / 5.1B active)":   {raw:117,  act:5.1, kvkb:36},
+  "Devstral Small 24B (dense)":          {raw:24,   act:24,  kvkb:160},
+  "Qwen3-32B (dense)":                   {raw:32,   act:32,  kvkb:256},
+};
+const QUANTS = {"bf16 (2 B/param)":2, "fp8 (1 B/param)":1, "mxfp4 / nvfp4 (~0.53 B/param)":0.53, "int4 awq/gptq (0.5 B/param)":0.5};
+const KVDT = {"fp16 / bf16":1, "fp8":0.5};
+const ROUTERS = {"cache-aware":1, "sticky":1, "least-loaded":1};
+const PROMPT_TOK = 500;   // engineer's prompt appended at the start of each task
+const SUB_PROMPT = 1000;  // brief a subagent starts from, on top of the shared base
+const HIST_S = 1800;      // seconds of timeline history kept (the widest window)
+const WATCH = 12;         // full-height rows at the top of the timeline
+
+/* ---------- knobs ---------- */
+const KNOBS = [
+  ["eng","engineers","Engineers",1,500,1,80,"",
+   "People using the agent. Closed loop: each one reviews, hands the agent a task, waits while it works, reviews again — so a slow server slows arrivals instead of piling them up forever."],
+  ["eng","spe","Sessions / engineer",1,4,0.1,1.5,"",
+   "Agent sessions each engineer runs side by side (worktrees, a background task). 1.5 = half the engineers run two. Sessions = engineers × this; each is an independent loop and one timeline row."],
+  ["eng","review","Mean review time",10,900,5,180,"s",
+   "Seconds between tasks: reading the diff, trying it, writing the next prompt. Exponential. Short = more load per engineer. Long = the session's cached prefix is more likely evicted before the next task."],
+  ["eng","cont","Continue conversation",0,1,0.05,0,"",
+   "Probability the next task continues the same conversation instead of starting fresh (/clear). Continuing keeps the context — and its cached prefix — growing across tasks until auto-compact: contexts get longer, the review gap has to be survived in the cache, and the KV cliff arrives with fewer engineers."],
+  ["loop","steps","Mean steps / task",2,100,1,25,"",
+   "Agent steps per task, lognormal (sigma 0.6) so some tasks run long. Each step is one LLM call followed by a tool run; the last call is the final answer, with no tool after it."],
+  ["loop","tool","Mean tool run time",0,30,0.5,3,"s",
+   "Seconds a tool runs between calls — bash, tests, file reads, grep. Exponential. Costs no GPU here; it is the gap during which the session's KV sits idle in the pool, exposed to eviction."],
+  ["loop","baseTok","Shared base prefix",1000,40000,500,15000,"tok",
+   "System prompt + tool schemas, identical for every session. With prefix caching it is held once per replica and stays hot; without it every call prefills it again."],
+  ["loop","resTok","Mean tool result",100,10000,100,1500,"tok",
+   "Tokens a tool returns into the context (file contents, test output). Lognormal with a heavy tail (sigma 0.8). With a warm cache this is most of the new prefill per step."],
+  ["loop","callTok","Mean tool call",20,2000,10,300,"tok",
+   "Tokens of the tool call itself — an edit, a command. Decoded, then kept in the context."],
+  ["loop","thinkTok","Mean thinking / step",0,4000,50,600,"tok",
+   "Reasoning tokens decoded before each tool call. Often bigger than the call, so steps are decode-heavy. Stripped from the next prompt unless 'keep thinking in context' is on."],
+  ["loop","compactAt","Auto-compact at",20000,400000,5000,150000,"tok",
+   "Context size that triggers a compaction call before the next step: the whole context is read (mostly cached) and a summary decoded. The context restarts at base prefix + summary, with nothing cached past the base."],
+  ["loop","compactOut","Compaction summary",500,10000,100,3000,"tok",
+   "Tokens decoded by one compaction call. A long decode: at 25 tok/s, 3000 tokens is two minutes of the engineer waiting."],
+  ["sub","subP","Fan-out chance / task",0,1,0.05,0.3,"",
+   "Probability a task fans out once to subagents (Task tool) at a random step. The parent blocks until the slowest child returns, and its cached prefix idles — exposed to eviction — meanwhile."],
+  ["sub","subK","Subagents per fan-out",1,8,1,3,"",
+   "Children launched together. Each starts from a fresh context (shared base + a ~1k-token brief), so k prefills land at once."],
+  ["sub","subSteps","Mean subagent steps",2,50,1,10,"",
+   "Steps per child, lognormal like the main loop. Each child returns a tool-result-sized report into the parent's context."],
+  ["slo","sloSlow","Task slowdown target",1,10,0.1,5,"x",
+   "Scored at p95: task wall-clock ÷ the same task on an idle server with a warm cache (same tokens, same tool times). 1.0 = contention costs nothing. It climbs with batch size even with no queue at all, because the idle baseline decodes alone at batch 1 — so it is the price of sharing, while TTFT and evictions mark the cliff. Scoring only; does not change the simulation."],
+  ["slo","sloTtft","TTFT target",0.2,20,0.1,3,"s",
+   "Scored at p95: from a call being sent until its first token — queue wait + prefill. Cache misses and long queues show up here first."],
+  ["slo","sloTps","Min decode speed",1,100,1,20,"tok/s",
+   "Scored at p5: per-call decode speed, tokens after the first ÷ decode time. Below ~20 tok/s the agent feels sluggish. Falls with batch size and with context length, since every pass reads every running sequence's KV."],
+  ["hw","replicas","Replicas (data parallel)",1,8,1,2,"",
+   "Independent vLLM instances, each with its own GPUs and its own KV cache, behind the router. Changing it restarts the run. Total GPUs = replicas × TP."],
+  ["hw","tp","Tensor parallel / replica",1,8,1,4,"GPU",
+   "GPUs per replica with the model sharded across them. More TP = more bandwidth, FLOPs and KV pool per replica, but fewer replicas for the same GPUs: one fat engine vs several thin ones."],
+  ["serve","maxSeqs","max_num_seqs",1,512,1,64,"",
+   "vLLM cap on sequences running at once per replica. At long context the KV pool usually binds first: a call is admitted only when its whole context plus output fits, after evicting idle prefixes."],
+  ["serve","maxBatchTok","max_num_batched_tokens",512,65536,512,8192,"tok",
+   "Token budget per forward pass, shared by decodes (1 token each) and prefill chunks (the rest). Big = faster cold prefills, but every decoding stream stalls while a chunk runs. Small = smoother decode, slower TTFT."],
+  ["serve","spill","Cache-aware spill at",0,64,1,8,"calls",
+   "Cache-aware router only: send a call to the replica holding its prefix unless more than this many calls already queue there; then fall back to least-loaded and pay a full re-prefill."],
+  ["eff","mbu","Memory bandwidth util",0.1,0.95,0.01,0.7,"",
+   "Fraction of peak HBM bandwidth achieved. Decode is bandwidth-bound: the weights plus every running sequence's KV are read once per forward pass."],
+  ["eff","mfu","Model FLOPs util",0.05,0.8,0.01,0.4,"",
+   "Fraction of peak FLOPs achieved in prefill. Attention FLOPs, which grow with context, are not modelled separately — lower this to account for them at very long context."],
+  ["eff","overhead","Per-pass overhead",0,30,0.5,8,"ms",
+   "Fixed time added to every forward pass: kernel launches, TP all-reduce latency, scheduling, sampling. Dominates single-stream decode on big MoE models; without it batch-1 decode looks unrealistically fast."],
+  ["eff","vramHead","Usable VRAM fraction",0.7,0.98,0.01,0.9,"",
+   "Share of VRAM for weights + KV cache — vLLM's gpu_memory_utilization in spirit."],
+];
+const P = {};
+const fk=v=>v>=1e6?(v/1e6).toFixed(2)+"M":v>=1e4?(v/1e3).toFixed(0)+"k":v>=1e3?(v/1e3).toFixed(1)+"k":Math.round(v)+"";
+const fs=v=>v<1?(v*1000).toFixed(0)+"ms":v<60?v.toFixed(1)+"s":(v/60).toFixed(1)+"m";
+function buildKnobs(){
+  const hosts = {eng:"knobsEng",loop:"knobsLoop",sub:"knobsSub",slo:"knobsSlo",hw:"knobsHw",serve:"knobsServe",eff:"knobsEff"};
+  for (const [grp,key,label,min,max,step,def,unit,tip] of KNOBS){
+    P[key]=def;
+    const host=document.getElementById(hosts[grp]);
+    const d=document.createElement("div"); d.className="ctl";
+    d.innerHTML='<div class="row"><label>'+label+' <span class="q" data-tip="'+tip.replace(/"/g,"&quot;")+'">?</span></label><span class="val" id="v_'+key+'"></span></div>'+
+      '<input type="range" autocomplete="off" id="k_'+key+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+def+'">';
+    host.appendChild(d);
+    const inp=d.querySelector("input"), out=d.querySelector(".val");
+    const show=()=>{out.textContent=(unit==="tok"?fk(P[key]):step<1?(+P[key]).toFixed(2):P[key])+(unit?" "+unit:"");};
+    inp.oninput=()=>{P[key]=parseFloat(inp.value); show();};
+    show();
+  }
+}
+buildKnobs();
+
+function fillSel(id,obj,def){
+  const s=document.getElementById(id);
+  for (const k of Object.keys(obj)){const o=document.createElement("option");o.value=k;o.textContent=k;s.appendChild(o);}
+  s.value=def; return s;
+}
+const selModel=fillSel("model",MODELS,"MiniMax-M2 (230B / 10B active)");
+const selGpu=fillSel("gpu",GPUS,"H200 141GB");
+const selQuant=fillSel("quant",QUANTS,"fp8 (1 B/param)");
+const selKv=fillSel("kvdt",KVDT,"fp8");
+const selRouter=fillSel("router",ROUTERS,"cache-aware");
+const selWin=document.getElementById("win");
+const chkApc=document.getElementById("apc"), chkKeep=document.getElementById("keep");
+const inRaw=document.getElementById("pRaw"), inAct=document.getElementById("pAct"), inKv=document.getElementById("pKv");
+function applyModelPreset(){const m=MODELS[selModel.value];inRaw.value=m.raw;inAct.value=m.act;inKv.value=m.kvkb;}
+applyModelPreset(); selModel.onchange=applyModelPreset;
+
+/* ---------- rng ---------- */
+let rngState=1;
+function srand(s){rngState=(s>>>0)||1;}
+function rnd(){rngState^=rngState<<13;rngState^=rngState>>>17;rngState^=rngState<<5;return ((rngState>>>0)%1e6)/1e6;}
+const expo=m=>-m*Math.log(1-rnd()*0.999999);
+const lnMean=(mean,sig,min)=>{ // lognormal with the given mean, Box-Muller
+  const u1=Math.max(rnd(),1e-6),u2=rnd();
+  const z=Math.sqrt(-2*Math.log(u1))*Math.cos(2*Math.PI*u2);
+  return Math.max(min,Math.round(mean*Math.exp(sig*z-sig*sig/2)));
+};
+
+/* ---------- derived config: the roofline ---------- */
+function cfg(){
+  const g=GPUS[selGpu.value], bpp=QUANTS[selQuant.value], kvMul=KVDT[selKv.value];
+  const raw=Math.max(0.05,parseFloat(inRaw.value)||1), act=Math.min(raw,Math.max(0.05,parseFloat(inAct.value)||1));
+  const kvkb=Math.max(1,parseFloat(inKv.value)||32);
+  const wGB=raw*bpp, wPerGpu=wGB/P.tp, usable=g.vram*P.vramHead;
+  const kvPerGpu=Math.max(0,usable-wPerGpu), kvTotal=kvPerGpu*P.tp;   // KV sharded across TP ranks
+  const kvB=kvkb*1024*kvMul;                                          // bytes per token
+  return {g,bpp,raw,act,kvkb,kvMul,wGB,wPerGpu,usable,kvTotal,kvB,
+          poolTok:Math.floor(kvTotal*1e9/kvB),
+          memBW:g.bw*P.tp*P.mbu*1e9, flops:g.tflops*P.tp*P.mfu*1e12,
+          wBytes:raw*1e9*bpp, af:act/raw, fpt:2*act*1e9, ovh:P.overhead/1000,
+          apc:chkApc.checked, keep:chkKeep.checked, oom:wPerGpu>usable};
+}
+// share of weights read by a pass over n tokens: each token touches af of the experts, the pass reads their union
+const union=(C,n)=>n<=0?0:1-Math.pow(1-C.af,n);
+// one forward pass over nTok tokens (decodes + prefill chunk) while decoding sequences hold kvTok tokens of KV
+function passT(C,nTok,kvTok){
+  return C.ovh+Math.max((C.wBytes*union(C,nTok)+kvTok*C.kvB)/C.memBW, nTok*C.fpt/C.flops, 1e-5);
+}
+function prefillIdeal(C,p){
+  const ch=P.maxBatchTok, full=Math.floor(p/ch), rem=p-full*ch;
+  return full*passT(C,ch,0)+(rem>0?passT(C,rem,0):0);
+}
+// a call alone on an idle replica: prefill the new tokens, then decode the rest at batch 1
+const callIdeal=(C,prompt,newTok,out)=>prefillIdeal(C,newTok)+(out-1)*passT(C,1,prompt+out/2);
+
+/* ---------- sim state ---------- */
+let S;
+function reset(){
+  srand(parseInt(document.getElementById("seed").value)||7);
+  S={t:0,nid:0,ses:[],subs:[],reps:[],
+     calls:{ttft:[],tps:[],ctx:[]},slow:[],
+     cnt:{prompt:0,hit:0,ev:0,tasks:0,wall:0,pre:0,dec:0},snaps:[],rt:{hit:0,evm:0,tpm:0,pre:0,dec:0},
+     hist:{slow:[],ttft:[],tps50:[],tps5:[],hit:[],kv:[],q:[],pre:[],dec:[],b:[]},nextSample:1,lastSample:0};
+  for(let i=0;i<Math.round(P.replicas);i++) S.reps.push({i,q:[],run:[],idle:new Set(),kvRun:0,kvIdle:0,clock:0,
+    aT:0,aM:0,aC:0,busy:0,memU:0,cmpU:0,flash:-99,over:false});
+  syncStruct();
+}
+function mkSession(kind,parent){
+  const id=S.nid++;
+  return {id,hid:(Math.imul(id+1,2654435761)>>>0)>>>11,kind,parent,st:"review",timer:0,ctx:P.baseTok,warm:0,
+          cRep:-1,cTok:0,cLast:0,task:null,pendRes:0,subPending:0,subIdeal:0,kids:[],slot:0,
+          segs:[],cur:{k:"review",t0:S.t},evs:[],retire:false,started:false};
+}
+// sessions are added at the end and retired from the end; a busy session finishes its task first
+function syncStruct(){
+  const n=Math.max(1,Math.round(P.engineers*P.spe));
+  while(S.ses.length<n){const s=mkSession("main",null); s.timer=rnd()*P.review; S.ses.push(s);}
+  for(let i=0;i<S.ses.length;i++) S.ses[i].retire=i>=n;
+  for(let i=S.ses.length-1;i>=n;i--) if(S.ses[i].st==="review"){dropCache(S.ses[i]); S.ses.splice(i,1);}
+}
+function push(arr,v,lim=400){arr.push(v); if(arr.length>lim) arr.shift();}
+function setSeg(s,k,t){
+  if(s.cur.k===k) return;
+  t=Math.max(t,s.cur.t0);
+  if(t>s.cur.t0) s.segs.push([s.cur.k,s.cur.t0,t]);
+  s.cur={k,t0:t};
+  while(s.segs.length && s.segs[0][2]<S.t-HIST_S) s.segs.shift();
+}
+
+/* ---------- KV cache bookkeeping (whole-session LRU, shared base always hot) ---------- */
+function dropCache(s){
+  if(s.cRep<0) return;
+  const r=S.reps[s.cRep]; if(r){r.idle.delete(s); r.kvIdle-=s.cTok;}
+  s.cRep=-1; s.cTok=0;
+}
+function evict(r,v){
+  dropCache(v); S.cnt.ev++; r.flash=S.t;
+  v.evs.push(r.clock); while(v.evs.length && v.evs[0]<S.t-HIST_S) v.evs.shift();
+}
+function lru(r,except){
+  let best=null;
+  for(const v of r.idle) if(v!==except && (!best || v.cLast<best.cLast)) best=v;
+  return best;
+}
+
+/* ---------- router ---------- */
+function leastLoaded(){
+  let best=S.reps[0],bl=Infinity;
+  for(const r of S.reps){const l=r.q.length+r.run.length; if(l<bl){bl=l;best=r;}}
+  return best;
+}
+function route(s,C){
+  const mode=selRouter.value;
+  if(mode==="sticky") return S.reps[s.hid%S.reps.length];
+  if(mode==="cache-aware" && C.apc && s.cRep>=0 && S.reps[s.cRep].q.length<=P.spill) return S.reps[s.cRep];
+  return leastLoaded();
+}
+
+/* ---------- agent loop ---------- */
+function startTask(s,C){
+  if(!s.started || rnd()>=P.cont){ dropCache(s); s.ctx=P.baseTok+PROMPT_TOK; s.warm=0; }
+  else s.ctx+=PROMPT_TOK;
+  s.started=true;
+  const N=lnMean(P.steps,0.6,1);
+  s.task={t0:S.t,ideal:0,N,idx:0,spawnAt:(N>=2 && rnd()<P.subP)?1+Math.floor(rnd()*(N-1)):-1};
+  nextCall(s,C,S.t);
+}
+function nextCall(s,C,t){
+  const compact=s.ctx>P.compactAt;
+  const think=compact||P.thinkTok<=0?0:lnMean(P.thinkTok,0.5,1);
+  const callT=compact?Math.round(P.compactOut):lnMean(P.callTok,0.5,4);
+  const out=think+callT;
+  const warmPre=Math.max(1,s.ctx-P.baseTok-s.warm);   // what a never-evicted cache would leave to prefill
+  s.task.ideal+=callIdeal(C,s.ctx,warmPre,out);
+  const r=route(s,C);
+  r.q.push({s,prompt:s.ctx,think,callT,out,compact,warmPre,tArr:t,tFirst:-1,phase:"queue",
+            rem:0,gen:0,need:0,hit:0,chunk:0,d:false,fin:false,cold:false});
+  s.st="llm"; setSeg(s,"queue",t);
+}
+// called once per forward pass: admit FCFS while slots and KV allow, evicting idle prefixes LRU
+function admit(r,C){
+  const base=C.apc?P.baseTok:0;
+  while(r.run.length<P.maxSeqs && r.q.length){
+    const c=r.q[0], s=c.s, mine=C.apc && s.cRep===r.i;
+    const need=c.prompt-base+c.out;                      // reserved up front, so no preemption
+    const extra=need-(mine?s.cTok:0);                    // the session's own idle prefix is reused in place
+    let free=C.poolTok-base-r.kvRun-r.kvIdle;
+    while(free<extra){const v=lru(r,s); if(!v) break; free+=v.cTok; evict(r,v);}
+    if(free<extra && r.run.length) break;                // head of line waits for KV
+    r.over=free<extra;                                   // admitted alone although it does not fit
+    r.q.shift();
+    const own=mine?Math.min(s.cTok,c.prompt-base):0;
+    dropCache(s);
+    c.need=need; r.kvRun+=need;
+    c.hit=base+own; c.rem=Math.max(1,c.prompt-c.hit); c.cold=c.rem>c.warmPre+8;
+    c.phase="prefill";
+    S.cnt.prompt+=c.prompt; S.cnt.hit+=c.hit; push(S.calls.ctx,c.prompt);
+    r.run.push(c); setSeg(s,c.cold?"cold":"prefill",r.clock);
+  }
+}
+function finish(r,c,t,C){
+  r.kvRun-=c.need;
+  const s=c.s, tk=s.task;
+  if(c.out>1) push(S.calls.tps,(c.out-1)/Math.max(1e-6,t-c.tFirst));
+  if(c.compact){ s.ctx=P.baseTok+c.out; s.warm=0; nextCall(s,C,t); return; }  // nothing past the base matches any more
+  // the next prompt is this prompt + output (thinking stripped unless kept); the cache matches up to where they diverge
+  const usable=c.prompt-P.baseTok+(C.keep||c.think===0?c.out:0);
+  s.ctx=c.prompt+(C.keep?c.out:c.callT);
+  s.warm=usable;
+  if(C.apc){ s.cRep=r.i; s.cTok=usable; s.cLast=t; r.idle.add(s); r.kvIdle+=usable; }
+  if(++tk.idx>=tk.N){ endTask(s,t,C); return; }
+  if(tk.idx===tk.spawnAt){ spawn(s,t,C); return; }
+  const tt=expo(P.tool); tk.ideal+=tt;
+  s.st="tool"; s.timer=tt+(t-S.t); s.pendRes=lnMean(P.resTok,0.8,20); setSeg(s,"tool",t);
+}
+function endTask(s,t,C){
+  if(s.kind==="sub"){ subDone(s,t,C); return; }
+  const wall=t-s.task.t0;
+  push(S.slow,wall/Math.max(1e-6,s.task.ideal),300); S.cnt.tasks++; S.cnt.wall+=wall;
+  s.st="review"; s.timer=expo(P.review)+(t-S.t); s.task=null; setSeg(s,"review",t);
+  if(s.retire){ dropCache(s); S.ses.splice(S.ses.indexOf(s),1); }
+}
+function spawn(p,t,C){
+  const k=Math.round(P.subK);
+  p.st="sub"; p.subPending=k; p.subIdeal=0; p.pendRes=0; setSeg(p,"sub",t);
+  p.kids=p.kids.filter(ch=>ch.st!=="done" || ch.cur.t0>S.t-HIST_S);
+  for(let j=0;j<k;j++){
+    const ch=mkSession("sub",p);
+    ch.slot=j; ch.started=true; ch.ctx=P.baseTok+SUB_PROMPT; ch.cur={k:"queue",t0:t};
+    ch.task={t0:t,ideal:0,N:lnMean(P.subSteps,0.6,1),idx:0,spawnAt:-1};
+    S.subs.push(ch); p.kids.push(ch);
+    nextCall(ch,C,t);
+  }
+}
+function subDone(ch,t,C){
+  const p=ch.parent;
+  dropCache(ch); ch.st="done"; setSeg(ch,"done",t);
+  S.subs.splice(S.subs.indexOf(ch),1);
+  p.subIdeal=Math.max(p.subIdeal,ch.task.ideal);
+  p.pendRes+=lnMean(P.resTok,0.8,20);
+  if(--p.subPending<=0){ p.task.ideal+=p.subIdeal; p.ctx+=p.pendRes; p.pendRes=0; nextCall(p,C,t); }
+}
+
+/* ---------- engine: one forward pass at a time per replica ---------- */
+function runReplica(r,C){
+  for(;;){
+    if(!r.run.length){
+      if(!r.q.length){ r.clock=Math.max(r.clock,S.t); return; }
+      r.clock=Math.max(r.clock,r.q[0].tArr);
+    }
+    if(r.clock>=S.t) return;
+    admit(r,C);
+    // decodes take 1 token each; prefills share what is left of the token budget, oldest first (chunked prefill)
+    let nD=0,kvTok=0;
+    for(const c of r.run){ c.d=c.phase==="decode"; if(c.d){nD++; kvTok+=c.prompt+c.gen;} }
+    const budget=Math.max(0,P.maxBatchTok-nD); let pTok=0;
+    for(const c of r.run) if(!c.d){ c.chunk=Math.min(c.rem,budget-pTok); pTok+=c.chunk; }
+    const n=nD+pTok;
+    const mem=(C.wBytes*union(C,n)+kvTok*C.kvB)/C.memBW, cmp=n*C.fpt/C.flops;
+    const T=C.ovh+Math.max(mem,cmp,1e-5), tEnd=r.clock+T;
+    r.aT+=T; r.aM+=mem; r.aC+=cmp; S.cnt.pre+=pTok; S.cnt.dec+=nD;
+    let fin=false;
+    for(const c of r.run){
+      if(c.d){ if(++c.gen>=c.out){c.fin=true; fin=true;} }
+      else if(c.chunk>0 && (c.rem-=c.chunk)<=0){         // last chunk also yields the first token
+        c.phase="decode"; c.gen=1; c.tFirst=tEnd; push(S.calls.ttft,tEnd-c.tArr); setSeg(c.s,"decode",tEnd);
+        if(c.gen>=c.out){c.fin=true; fin=true;}
+      }
+    }
+    r.clock=tEnd;
+    if(fin){ const done=r.run.filter(c=>c.fin); r.run=r.run.filter(c=>!c.fin); for(const c of done) finish(r,c,tEnd,C); }
+  }
+}
+
+function toolTick(s,dt,C){ s.timer-=dt; if(s.timer<=0){ s.ctx+=s.pendRes; s.pendRes=0; nextCall(s,C,S.t); } }
+function step(dt,C){
+  S.t+=dt;
+  for(const s of S.ses){
+    if(s.st==="review"){ s.timer-=dt; if(s.timer<=0) startTask(s,C); }
+    else if(s.st==="tool") toolTick(s,dt,C);
+  }
+  for(const s of S.subs) if(s.st==="tool") toolTick(s,dt,C);
+  for(const r of S.reps) runReplica(r,C);
+  if(S.t>=S.nextSample) sample(C);
+}
+function sample(C){
+  const now=S.t, el=Math.max(1e-6,now-S.lastSample); S.lastSample=now; S.nextSample=now+1;
+  for(const r of S.reps){ r.busy=Math.min(1,r.aT/el); r.memU=r.aT?r.aM/r.aT:0; r.cmpU=r.aT?r.aC/r.aT:0; r.aT=r.aM=r.aC=0; }
+  // cumulative counters over a 60 s window (hit rate, evictions, tasks) and a 5 s window (token rates)
+  S.snaps.push({t:now,...S.cnt});
+  while(S.snaps.length>2 && S.snaps[1].t<=now-60) S.snaps.shift();
+  const a=S.snaps[0], z=S.snaps[S.snaps.length-1], T=z.t-a.t;
+  let f=S.snaps.length-1; while(f>0 && S.snaps[f-1].t>=now-5.01) f--;
+  const fz=S.snaps[f], T5=z.t-fz.t;
+  S.rt.hit=z.prompt>a.prompt?(z.hit-a.hit)/(z.prompt-a.prompt):0;
+  S.rt.evm=T>0?(z.ev-a.ev)/T*60:0;
+  S.rt.tpm=T>0?(z.tasks-a.tasks)/T*60:0;
+  S.rt.pre=T5>0?(z.pre-fz.pre)/T5:0; S.rt.dec=T5>0?(z.dec-fz.dec)/T5:0;
+  let q=0,b=0,run=0,idle=0,pool=0;
+  for(const r of S.reps){q+=r.q.length; b+=r.run.length; run+=r.kvRun; idle+=r.kvIdle; pool+=C.poolTok;}
+  const fr=v=>pool?Math.min(1,v/pool):0, H=S.hist, L=600;
+  push(H.slow,pct(S.slow,95),L); push(H.ttft,pct(S.calls.ttft,95),L);
+  push(H.tps50,pct(S.calls.tps,50),L); push(H.tps5,pct(S.calls.tps,5),L);
+  push(H.hit,S.rt.hit*100,L); push(H.q,q,L); push(H.b,b,L); push(H.pre,S.rt.pre,L); push(H.dec,S.rt.dec,L);
+  push(H.kv,[fr(run),fr(idle),fr(C.apc?P.baseTok*S.reps.length:0)],L);
+}
+function pct(a,p){ if(!a.length) return 0; const b=[...a].sort((x,y)=>x-y); return b[Math.min(b.length-1,Math.floor(p/100*b.length))]; }
+const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
+
+/* ---------- render ---------- */
+function fit(c,h){const dpr=devicePixelRatio||1,w=c.clientWidth;if(c.width!==w*dpr||c.height!==h*dpr){c.width=w*dpr;c.height=h*dpr;}
+  const x=c.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,w,h);return [x,w,h];}
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL={};
+for(const k of ["tool","queue","prefill","cold","decode","sub","review","bad","tx2","tx3","line","mono"]) COL[k]=css("--"+k);
+
+function sesLabel(i){
+  const E=Math.max(1,Math.round(P.engineers));
+  return i<E?"e"+i:"e"+((i-E)%E)+"·"+(2+Math.floor((i-E)/E));
+}
+// draw every segment of s overlapping [t0, now] into the row at y..y+hh (review is the row background)
+function drawSegs(x,s,X,t0,y,hh){
+  const one=(k,a,b)=>{
+    if(k==="review"||k==="done"||b<=t0) return;
+    const px=X(Math.max(a,t0)), pw=X(Math.min(b,S.t))-px;
+    if(pw<0.3) return;
+    x.fillStyle=COL[k]; x.fillRect(px,y,pw,hh);
+  };
+  for(const g of s.segs) one(g[0],g[1],g[2]);
+  one(s.cur.k,s.cur.t0,S.t);
+}
+function drawGantt(){
+  const [x,w,h]=fit(document.getElementById("gantt"),480);
+  const win=+selWin.value, t0=S.t-win, gx=74, gw=w-gx-6;
+  const X=t=>gx+(t-t0)/win*gw;
+  x.font="10px "+COL.mono; x.textBaseline="middle";
+  // watched rows
+  const top=16, rowH=20, nW=Math.min(WATCH,S.ses.length);
+  x.fillStyle=COL.tx3; x.fillText("WATCHED",0,7);
+  for(let i=0;i<nW;i++){
+    const s=S.ses[i], y=top+i*rowH;
+    x.fillStyle=COL.review; x.fillRect(gx,y,gw,11);
+    drawSegs(x,s,X,t0,y,11);
+    const kids=s.kids.filter(ch=>ch.st!=="done"||ch.cur.t0>t0);
+    if(kids.length){
+      const k=1+Math.max(...kids.map(ch=>ch.slot)), sh=Math.min(2.5,7/k);
+      for(const ch of kids) drawSegs(x,ch,X,t0,y+12+ch.slot*sh,Math.max(1,sh-0.4));
+    }
+    x.fillStyle=COL.bad;
+    for(const e of s.evs) if(e>t0) x.fillRect(X(e)-1,y-1,2,13);
+    x.fillStyle=COL.tx2; x.fillText(sesLabel(i),0,y+6);
+    x.fillStyle=COL.tx3; x.textAlign="right"; x.fillText(fk(s.ctx),gx-6,y+6); x.textAlign="left";
+  }
+  // raster of all sessions
+  const rTop=top+nW*rowH+18, rH=h-rTop-18, n=S.ses.length, rows=Math.max(1,Math.min(n,Math.floor(rH)));
+  const rh=rH/rows;
+  x.fillStyle=COL.tx3; x.fillText("ALL "+n+(rows<n?" (every "+(n/rows).toFixed(1)+"th)":""),0,rTop-9);
+  x.fillStyle=COL.review; x.fillRect(gx,rTop,gw,rH);
+  for(let j=0;j<rows;j++) drawSegs(x,S.ses[Math.floor(j*n/rows)],X,t0,rTop+j*rh,Math.max(0.8,rh>3?rh-1:rh));
+  // time axis
+  const tick=win<=120?20:win<=600?60:300;
+  x.strokeStyle=COL.line; x.fillStyle=COL.tx3; x.textAlign="center"; x.beginPath();
+  for(let a=0;a<=win;a+=tick){const px=X(S.t-a); x.moveTo(px,top-4); x.lineTo(px,h-14);
+    x.fillText(a?"−"+(a>=60?(a/60)+"m":a+"s"):"now",Math.min(w-14,Math.max(gx+10,px)),h-6);}
+  x.stroke(); x.textAlign="left"; x.textBaseline="alphabetic";
+}
+// o.ref: fixed horizontal reference line (o.refLabel); o.arr2/o.color2/o.label2: dashed second series
+function spark(id,arr,fmt,color,o={}){
+  const [x,w,h]=fit(document.getElementById(id),120);
+  if(arr.length<2) return;
+  const mx=Math.max(...arr,...(o.arr2||[]),o.ref||0)*1.15||1, mn=0;
+  const Y=v=>h-6-(h-22)*((v-mn)/(mx-mn));
+  x.strokeStyle=css("--line"); x.beginPath();
+  for(let i=1;i<4;i++){const y=h-6-(h-22)*i/4;x.moveTo(0,y);x.lineTo(w,y);} x.stroke();
+  x.strokeStyle=color; x.lineWidth=1.6; x.beginPath();
+  arr.forEach((v,i)=>{const px=i/(arr.length-1)*(w-4)+2, py=Y(v);
+    i?x.lineTo(px,py):x.moveTo(px,py);});
+  x.stroke();
+  x.fillStyle=color+"22"; x.lineTo(w-2,h-6); x.lineTo(2,h-6); x.fill();
+  x.font="11px "+css("--mono");
+  if(o.arr2&&o.arr2.length>1){
+    x.strokeStyle=o.color2; x.setLineDash([5,3]); x.beginPath();
+    o.arr2.forEach((v,i)=>{const px=i/(o.arr2.length-1)*(w-4)+2; i?x.lineTo(px,Y(v)):x.moveTo(px,Y(v));});
+    x.stroke(); x.setLineDash([]);
+  }
+  if(o.ref!=null){
+    const y=Y(o.ref);
+    x.strokeStyle=css("--bad"); x.lineWidth=1; x.setLineDash([4,4]); x.beginPath(); x.moveTo(0,y); x.lineTo(w,y); x.stroke(); x.setLineDash([]);
+    x.fillStyle=css("--bad"); x.textAlign="right"; x.fillText(o.refLabel,w-4,y-4); x.textAlign="left";
+  }
+  const cur=fmt(arr[arr.length-1]);
+  x.fillStyle=css("--tx2"); x.fillText(cur,4,12);
+  if(o.arr2&&o.arr2.length) { x.fillStyle=o.color2; x.fillText("  "+o.label2+" "+fmt(o.arr2[o.arr2.length-1]),4+x.measureText(cur).width,12); }
+  const avg=arr.reduce((a,c)=>a+c,0)/arr.length;
+  x.fillStyle=css("--tx3"); x.textAlign="right"; x.fillText("avg "+fmt(avg)+" · max "+fmt(Math.max(...arr)),w-4,12); x.textAlign="left";
+}
+// stacked area of fractions (0..1); each sample is an array, one value per layer, bottom first
+function stackChart(id,arr,cols,names){
+  const [x,w,h]=fit(document.getElementById(id),120);
+  if(arr.length<2) return;
+  const Y=v=>h-6-(h-22)*v, PX=i=>i/(arr.length-1)*(w-4)+2;
+  x.strokeStyle=css("--line"); x.beginPath();
+  for(let i=1;i<4;i++){const y=Y(i/4);x.moveTo(0,y);x.lineTo(w,y);} x.stroke();
+  const lo=arr.map(()=>0);
+  cols.forEach((c,k)=>{
+    x.fillStyle=c; x.beginPath();
+    arr.forEach((v,i)=>{const y=Y(Math.min(1,lo[i]+v[k])); i?x.lineTo(PX(i),y):x.moveTo(PX(i),y);});
+    for(let i=arr.length-1;i>=0;i--) x.lineTo(PX(i),Y(lo[i]));
+    x.fill(); arr.forEach((v,i)=>lo[i]=Math.min(1,lo[i]+v[k]));
+  });
+  const v=arr[arr.length-1], used=v.reduce((a,c)=>a+c,0);
+  x.font="11px "+css("--mono"); x.fillStyle=css("--tx2");
+  x.fillText(names.map((n,k)=>n+" "+(v[k]*100).toFixed(0)+"%").join(" · ")+" · free "+(Math.max(0,1-used)*100).toFixed(0)+"%",4,12);
+}
+function tile(k,v,s,cls){return '<div class="tile"><div class="k">'+k+'</div><div class="v '+(cls||"")+'">'+v+(s?' <small>'+s+'</small>':'')+'</div></div>';}
+function renderUI(C){
+  let q=0,b=0; for(const r of S.reps){q+=r.q.length;b+=r.run.length;}
+  const has=a=>a.length>0, dash="–";
+  const sl50=pct(S.slow,50), sl95=pct(S.slow,95), tt50=pct(S.calls.ttft,50), tt95=pct(S.calls.ttft,95);
+  const tp50=pct(S.calls.tps,50), tp5=pct(S.calls.tps,5);
+  let nL=0,nT=0,nR=0,nS=0; for(const s of S.ses){ if(s.st==="llm")nL++; else if(s.st==="tool")nT++; else if(s.st==="sub")nS++; else nR++; }
+  document.getElementById("clock").textContent="t = "+fs(S.t);
+  document.getElementById("stats").innerHTML=
+    tile("slowdown p50",has(S.slow)?sl50.toFixed(2):dash,"x")+
+    tile("slowdown p95",has(S.slow)?sl95.toFixed(2):dash,"x",has(S.slow)?(sl95>P.sloSlow?"bad":"good"):"")+
+    tile("TTFT p50",has(S.calls.ttft)?fs(tt50):dash)+
+    tile("TTFT p95",has(S.calls.ttft)?fs(tt95):dash,"",has(S.calls.ttft)?(tt95>P.sloTtft?"bad":"good"):"")+
+    tile("decode p50",has(S.calls.tps)?tp50.toFixed(0):dash,"tok/s")+
+    tile("decode p5",has(S.calls.tps)?tp5.toFixed(0):dash,"tok/s",has(S.calls.tps)?(tp5<P.sloTps?"bad":"good"):"")+
+    tile("cache hit",(S.rt.hit*100).toFixed(0),"% prompt",C.apc&&S.rt.hit<0.8?"warnc":"")+
+    tile("evictions",S.rt.evm.toFixed(1),"/min",S.rt.evm>0?"warnc":"")+
+    tile("queue depth",q,"calls",q>0?"warnc":"")+
+    tile("batch",b,"/ "+(P.maxSeqs*S.reps.length))+
+    tile("prefill",(S.rt.pre/1000).toFixed(1),"k tok/s")+
+    tile("decode",(S.rt.dec/1000).toFixed(1),"k tok/s")+
+    tile("mean context",fk(mean(S.calls.ctx)),"tok")+
+    tile("in LLM",nL,"+"+S.subs.filter(s=>s.st==="llm").length+" sub")+
+    tile("tool · fan-out",nT+" · "+nS)+
+    tile("reviewing",nR,"/ "+S.ses.length)+
+    tile("tasks",S.rt.tpm.toFixed(1),"/min");
+
+  const base=C.apc?P.baseTok:0, pool=Math.max(1,C.poolTok), gname=selGpu.value.split(" ")[0];
+  document.getElementById("gpus").innerHTML=S.reps.map(r=>{
+    const fr=v=>Math.max(0,Math.min(100,100*v/pool));
+    const wr=fr(r.kvRun), wi=Math.min(fr(r.kvIdle),100-wr), wb=Math.min(fr(base),100-wr-wi);
+    const bound=r.memU>=r.cmpU?"HBM-bound":"FLOPs-bound";
+    return '<div class="rep"><div class="rh"><span>replica '+r.i+'</span><span>'+P.tp+'× '+gname+'</span></div>'+
+      '<div class="blab"><span>busy · '+r.run.length+' run · '+r.q.length+' queued</span><span>'+(r.busy*100).toFixed(0)+'%</span></div><div class="bar"><i style="width:'+(r.busy*100)+'%"></i></div>'+
+      '<div class="blab"><span>HBM time</span><span>'+(r.memU*100).toFixed(0)+'%</span></div><div class="bar"><i style="width:'+(r.memU*100)+'%;background:var(--decode)"></i></div>'+
+      '<div class="blab"><span>FLOPs time</span><span>'+(r.cmpU*100).toFixed(0)+'%</span></div><div class="bar"><i style="width:'+(r.cmpU*100)+'%;background:var(--prefill)"></i></div>'+
+      '<div class="blab"><span>KV pool · '+(r.busy>0?bound:"idle")+'</span><span>'+(wr+wi+wb).toFixed(0)+'% used</span></div>'+
+      '<div class="bar'+(S.t-r.flash<2?" ev":"")+'"><i style="width:'+wr+'%;background:var(--kvrun)"></i><i style="width:'+wi+'%;background:var(--kvidle)"></i><i style="width:'+wb+'%;background:var(--kvbase)"></i></div>'+
+      '<div class="blab"><span>'+fk(r.kvRun)+' run · '+fk(r.kvIdle)+' cached</span><span>'+r.idle.size+' prefixes</span></div></div>';
+  }).join("");
+
+  const grow=P.resTok+P.callTok+(C.keep?P.thinkTok:0), out=P.thinkTok+P.callTok;
+  const estCtx=P.baseTok+PROMPT_TOK+grow*(P.steps-1)/2, mCtx=S.calls.ctx.length?mean(S.calls.ctx):estCtx;
+  const callI=callIdeal(C,mCtx,grow,out), taskI=P.steps*callI+(P.steps-1)*P.tool;
+  const inLLM=S.ses.length*P.steps*callI/(P.review+taskI);
+  const preB=P.maxBatchTok*C.fpt/C.flops>C.wBytes*union(C,P.maxBatchTok)/C.memBW?"compute":"memory";
+  const wr=B=>(C.wBytes*union(C,B)/1e9).toFixed(0);
+  const d32=1/passT(C,32,32*mCtx), kvSeq=Math.floor(C.poolTok/Math.max(1,mCtx-base+out));
+  const over=S.reps.some(r=>r.over);
+  document.getElementById("derived").innerHTML=
+    (C.oom?'<div class="bad">⚠ weights do not fit: '+C.wPerGpu.toFixed(1)+' GB/GPU &gt; '+C.usable.toFixed(1)+' GB usable → raise TP or quantise harder</div>':'')+
+    (over?'<div class="bad">⚠ a single context exceeds the KV pool — lower auto-compact or add memory</div>':'')+
+    'weights <b>'+C.wGB.toFixed(0)+' GB</b> → <b>'+C.wPerGpu.toFixed(1)+' GB/GPU</b> @ TP'+P.tp+' · '+(S.reps.length*P.tp)+' GPUs total<br>'+
+    'KV pool <b>'+C.kvTotal.toFixed(0)+' GB</b>/replica = <b class="hl">'+fk(C.poolTok)+' tok</b> @ '+(C.kvkb*C.kvMul).toFixed(0)+' KB/tok<br>'+
+    'context <b>+'+fk(grow)+' tok/step</b> · '+(C.apc?'base '+fk(P.baseTok)+' held once':'no APC: base per call')+' · compact @ '+fk(P.compactAt)+'<br>'+
+    'mean context <b>'+fk(mCtx)+'</b> ('+(S.calls.ctx.length?'measured':'est. fresh task')+') = <b>'+(mCtx*C.kvB/1e9).toFixed(1)+' GB</b> KV<br>'+
+    'cache holds ≈ <b class="hl">'+Math.floor(C.poolTok/Math.max(1,mCtx-base))*S.reps.length+'</b> sessions of '+S.ses.length+' · KV-limited batch '+kvSeq+'/replica<br>'+
+    'prefill <b>'+(P.maxBatchTok/prefillIdeal(C,P.maxBatchTok)/1000).toFixed(1)+'k tok/s</b> idle ('+preB+'-bound)<br>'+
+    'decode B=1 <b>'+(1/passT(C,1,P.baseTok)).toFixed(0)+'</b> tok/s @ '+fk(P.baseTok)+' · <b>'+(1/passT(C,1,mCtx)).toFixed(0)+'</b> @ '+fk(mCtx)+'<br>'+
+    'decode B=32 @ '+fk(mCtx)+' <b class="hl">'+d32.toFixed(0)+' tok/s/stream</b> · '+(32*d32/1000).toFixed(1)+'k agg<br>'+
+    'weights read/pass <b>'+wr(1)+'</b> GB @B=1 · '+wr(8)+' @8 · '+wr(32)+' @32 · '+wr(P.maxBatchTok)+' @prefill<br>'+
+    'idle-server task ≈ <b>'+fs(taskI)+'</b> · '+fs(callI)+'/call<br>'+
+    'offered ≈ <b>'+inLLM.toFixed(0)+'</b> sessions in LLM at once (unqueued, no subagents)';
+
+  const H=S.hist;
+  spark("cSlow",H.slow,v=>v.toFixed(2)+"x",css("--acc"),{ref:P.sloSlow,refLabel:"target "+P.sloSlow+"x"});
+  spark("cTtft",H.ttft,fs,css("--acc"),{ref:P.sloTtft,refLabel:"target "+P.sloTtft+"s"});
+  spark("cTps",H.tps50,v=>v.toFixed(0),css("--ok"),{arr2:H.tps5,color2:css("--tx2"),label2:"p5",ref:P.sloTps,refLabel:"min "+P.sloTps});
+  spark("cHit",H.hit,v=>v.toFixed(0)+"%",css("--kvidle"));
+  stackChart("cKv",H.kv,[css("--kvrun"),css("--kvidle"),css("--kvbase")],["running","cached","base"]);
+  spark("cQ",H.q,v=>v.toFixed(0),css("--queue"));
+  spark("cTp",H.dec,v=>(v/1000).toFixed(1)+"k",css("--decode"),{arr2:H.pre,color2:css("--prefill"),label2:"prefill"});
+  spark("cB",H.b,v=>v.toFixed(0),css("--prefill"));
+}
+
+/* ---------- tooltips ---------- */
+const tipEl=document.createElement("div"); tipEl.id="tip"; document.body.appendChild(tipEl);
+document.addEventListener("mouseover",e=>{
+  const q=e.target.closest&&e.target.closest(".q"); if(!q) return;
+  tipEl.textContent=q.dataset.tip; tipEl.classList.add("on");
+  const r=q.getBoundingClientRect();
+  tipEl.style.left=Math.max(6,Math.min(innerWidth-tipEl.offsetWidth-6,r.left+18))+"px";
+  tipEl.style.top=Math.max(6,Math.min(innerHeight-tipEl.offsetHeight-6,r.top+16))+"px";
+});
+document.addEventListener("mouseout",e=>{ if(e.target.closest&&e.target.closest(".q")) tipEl.classList.remove("on"); });
+
+/* ---------- loop ---------- */
+let running=true,last=performance.now();
+document.getElementById("bPlay").onclick=e=>{running=!running;e.target.textContent=running?"Pause":"Play";e.target.classList.toggle("on",running);};
+document.getElementById("bReset").onclick=reset;
+document.getElementById("seed").onchange=reset;
+chkApc.onchange=()=>{ if(!chkApc.checked) for(const r of S.reps) for(const s of [...r.idle]) dropCache(s); };
+const sp=document.getElementById("speed");
+sp.oninput=()=>document.getElementById("vSpeed").textContent=sp.value+"x";
+reset();
+function frame(now){
+  const real=Math.min(0.05,(now-last)/1000); last=now;
+  const C=cfg();
+  if(S.reps.length!==Math.round(P.replicas)) reset();
+  syncStruct();
+  if(running && !C.oom){
+    const dt=0.01, steps=Math.min(400,Math.round(real*parseFloat(sp.value)/dt));
+    for(let i=0;i<steps;i++) step(dt,C);
+  }
+  drawGantt(); renderUI(C);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
