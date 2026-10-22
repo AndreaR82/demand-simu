@@ -10,12 +10,23 @@ approach has four steps:
 
 This is the agentic counterpart of `guidellm-guardrail-loadtest.md`, and it follows the same structure.
 
-**Status: design, not yet executed.** Facts were checked on 2026-10-21 against:
+**Status: nothing has run against vLLM yet. The orchestrator has been dry-run against a mock.** Facts
+were checked on 2026-10-21 against:
 - **Claude Code 2.1.308**: flags from `claude --help`, env vars from the official docs.
 - **vLLM**: its Claude Code integration page. The latest release on PyPI is 0.32.0.
 - **guideLLM 0.8.1**: trace formats and replay options read from the 0.8.1 wheel's source.
 
-Unlike the guardrail plan, **none of the commands below have been run yet.** Run 0 is where they get
+Code in this directory:
+
+| File | What it does |
+|---|---|
+| `simulate_engineers.py` | The orchestrator and simulated engineer (§4). |
+| `mock_messages_server.py` | A scripted stand-in for vLLM's `/v1/messages`. It can also play the engineer. Use it for dry runs without a GPU or an API bill. |
+| `example_tasks.jsonl` | Two tasks against this repo, showing the task format (§3). |
+
+On 2026-10-22, real Claude Code 2.1.308 ran end to end against the mock with `--sandbox local`. Those
+dry runs confirmed the facts marked *(dry run)* below. The vLLM side, the capture proxy, the trace
+builder, the guideLLM replay and `--sandbox docker` are all **still unrun**. Run 0 is where they get
 proven. Anything the docs couldn't confirm is marked *measure in Run 0*.
 
 ---
@@ -93,15 +104,14 @@ Two client-side things can break the cache before load even matters (details in 
 
 | Component | Existing tool | Status |
 |---|---|---|
-| Orchestrator | none | To write. Starts sandboxes, drives engineer turns, applies the timing model (§4.3), runs each task's check. |
-| Simulated engineer | none | To write. A prompt and a loop (§4). |
-| Sandbox | Docker. SWE-bench-style tasks come with prebuilt images. | One container per session, with network access only to the proxy. |
+| Orchestrator | `simulate_engineers.py` (this directory) | Starts sandboxes, drives engineer turns, applies the timing model (§4.3), runs each task's check. Dry-run against the mock. |
+| Simulated engineer | `simulate_engineers.py` | A prompt and a loop (§4). The backend is any OpenAI-compatible endpoint, or Claude through the Anthropic SDK. |
+| Sandbox | Docker. SWE-bench-style tasks come with prebuilt images. | `--sandbox docker`: one container per session, with network access only to the proxy. The image must have Claude Code installed. **Not yet run.** `--sandbox local` (a temp clone on the host, unsandboxed) is for dry runs only. |
 | Capture proxy | `claude-code-proxy` (seifghazi), whose upstream is set by `ANTHROPIC_FORWARD_URL` | It is used in front of the Anthropic API. Its README doesn't say whether it works in front of vLLM. *Verify in Run 0.* |
 | Trace builder | `agentic-coding-analysis`: `build_minimal_traces.py` | Reads `requests.db` plus Claude Code transcripts and writes WEKA traces. |
 | Replayer | guideLLM 0.8.1, `--data kind=weka` with `--profile kind=replay` | Closed-loop per conversation, with prefix sharing and parallel subagents (§7, Run 3). |
 
-The only new code is the orchestrator, the engineer loop, and two small post-processing steps (§6.3
-and §8).
+Still to write: two small post-processing steps, the gap re-inflation (§6.3) and turn slowdown (§8).
 
 ---
 
@@ -119,6 +129,9 @@ Each task is one JSONL line:
 
 | Field | Meaning |
 |---|---|
+| `image`, `workdir` | `--sandbox docker`: the image, and the repo's path inside it (default `/repo`). |
+| `repo` | `--sandbox local`: a git URL, or a path relative to the tasks file. |
+| `base_commit`, `setup` | Checked out, then run once before the session starts. Optional. |
 | `intent` | The full spec, **hidden from the agent**. Only the simulated engineer sees it. |
 | `opener` | The first message, as terse as a real one. If you leave it out, the engineer LLM writes it from `intent`. |
 | `check` | Lets the orchestrator tell the engineer whether the tests pass. For capacity, its job is to make the session end the way a real one would, not to score the model. |
@@ -142,6 +155,7 @@ start `claude -p --input-format stream-json ...` in the sandbox            (§5.
 send opener
 loop:
     read stream-json events until the `result` message                     (agent turn done)
+    if result.is_error: end the session as agent_error                     (retries exhausted, ...)
     shown = final assistant text + `git diff --stat` + check result (pass/fail, last lines)
     d = engineer_llm(ENGINEER_PROMPT, task.intent, visible conversation, shown)
     log modelled gap g = t_read + t_review + t_pause + t_type                (§4.3)
@@ -151,7 +165,19 @@ loop:
 ```
 
 The engineer LLM runs on **its own endpoint**. That can be another vLLM, or a hosted API. If it shared
-the server under test, its own calls would distort the measurements.
+the server under test, its own calls would distort the measurements. `simulate_engineers.py` implements
+this loop, and its `--help` lists every knob. Its outputs:
+
+| Output | Contents |
+|---|---|
+| `sessions.jsonl` | One line per session: the outcome, engineer turns, calls, retries, agent time, modelled think time, the final check, the Claude Code version, and the context window Claude Code assumed. The outcome is `accepted`, `abandoned`, `max_turns`, `agent_error`, `turn_timeout`, `engineer_error` or `error`. |
+| `<session>/engineer.jsonl` | One line per engineer turn. It holds the wall-clock `t_result` and `t_sent`; the agent turn's calls, retries, tokens and durations; lines changed; the check result; the decision; and the modelled think time, split into its parts and compared with `recorded_gap_s` (§6.3). |
+| `<session>/stream.jsonl` | Claude Code's stream-json events, verbatim. |
+| `<session>/cc/projects/` | Claude Code's transcripts, for the trace builder (§6.2). |
+
+A dry run needs no GPU and no API bill. Run `mock_messages_server.py` and point both Claude Code
+(`--base-url`) and the engineer (`--engineer openai --engineer-url <mock>/v1`) at it. The commands are
+in the script's docstring.
 
 ### 4.2 Prompt (draft)
 
@@ -174,8 +200,10 @@ Output JSON only: {"action": "reply" | "accept" | "abandon", "message": "<text o
 <intent>{task.intent}</intent>
 ```
 
-Fix the engineer LLM's temperature and seed. Spot-check 10 conversations by hand before Run 1. The
-usual faults are a user who is too helpful, too wordy, or who leaks the spec.
+For an OpenAI-compatible engineer, fix the temperature and seed (`--engineer-temperature`,
+`--engineer-seed`). Claude's API no longer accepts sampling parameters, so a Claude engineer varies from
+run to run. Record enough sessions for that to average out. Spot-check 10 conversations by hand before
+Run 1. The usual faults are a user who is too helpful, too wordy, or who leaks the spec.
 
 ### 4.3 Timing model
 
@@ -238,8 +266,9 @@ block, or as container env vars.
 |---|---|---|
 | `ANTHROPIC_BASE_URL` | `http://<proxy>:3001` | The proxy, not vLLM directly, so every call is captured. |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` | `dummy` | The vLLM docs say Claude Code needs both set. |
-| `ANTHROPIC_DEFAULT_OPUS_MODEL`, `_SONNET_MODEL`, `_HAIKU_MODEL` | `$MODEL` | Maps every tier to the served model. The Haiku tier is also used for **background** work, so those calls hit vLLM too. *Measure their share in Run 0.* |
-| `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | `max_model_len` | Claude Code assumes 200k for a model ID it doesn't recognise, and can't detect a smaller server limit. |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL`, `_SONNET_MODEL`, `_HAIKU_MODEL` | `$MODEL` | Maps every tier to the served model. The Haiku tier is also used for **background** work, so those calls hit vLLM too. *(dry run)* Against the mock, 2.1.308 in `-p` mode made no background calls: every call carried the full tool set. *Confirm with the real model in Run 0.* |
+| `ANTHROPIC_MODEL` | `$MODEL` | **Required, although the vLLM docs leave it out.** *(dry run)* With only the tier defaults set, 2.1.308 runs `$MODEL[1m]`, assumes a **1M** window and ignores `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so it never compacts before vLLM's limit. Setting `ANTHROPIC_MODEL` makes the cap apply. Without the cap, it assumes 200k. |
+| `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | `max_model_len` | Claude Code can't detect a smaller server limit. Check the assumed window in `sessions.jsonl` (`context_window`). |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | the production value (100k–1M) | When compaction fires, the prefix resets and the next call is a full prefill. |
 | `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | the production value | Defaults to 32,000 for unknown model IDs. Compaction window + this value must fit in `max_model_len`. |
 | `CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT` | pin `0` or `1` | Chooses the full or the short system prompt. Pin it so experiments or server config can't change prompt size between runs. |
@@ -260,9 +289,10 @@ claude -p --input-format stream-json --output-format stream-json --verbose \
 ```
 
 - **`--input-format stream-json`** keeps one process alive for the whole session, and the orchestrator
-  writes each engineer message to stdin. That is closest to an interactive session. The fallback is
-  one process per turn: `claude -p "<msg>" --output-format json`, then `--resume "$session_id"`. That
-  restarts the process each turn, which may add calls at startup. *Compare call counts in Run 0.*
+  writes each engineer message to stdin. That is closest to an interactive session. *(dry run)* It
+  works as follows: each message on stdin produces a `system/init` event, the turn's events, and
+  exactly one `result`, and the process exits when stdin closes. Restarting the process each turn with
+  `--resume` isn't needed.
 - **`--dangerously-skip-permissions`**: the sandbox has no network beyond the proxy, which is the
   setup the flag's own help text recommends. Without it, `-p` runs start in manual mode and deny
   anything that would prompt.
@@ -273,6 +303,16 @@ claude -p --input-format stream-json --output-format stream-json --verbose \
   are real prompt tokens and real calls. The docs say bare mode will become the default for `-p` in a
   future release, so pin the Claude Code version. In Run 0, check that the first call's input size
   matches an interactive session in the same repo.
+- **No parent CLAUDE.md.** Claude Code also loads CLAUDE.md files from the directories above the repo.
+  `--sandbox local` therefore clones into a temp directory, not under `--out`.
+
+Reading the `result` event *(dry run, 2.1.308)*:
+- A failed API call ends the turn with `is_error: true` and `terminal_reason: "api_error"`, but
+  `subtype` still says `"success"`. Check `is_error`.
+- `duration_api_ms` is cumulative over the process. `duration_ms`, `num_turns` and `usage` are per
+  turn.
+- Each retry is a `system/api_retry` event with `error_status` and `retry_delay_ms`. When the mock
+  injected 529s, the counted retries matched the 529s it served.
 
 ---
 
@@ -336,10 +376,15 @@ Caveats:
 
 ### 6.3 Put engineer time back
 
-The recording ran with `ENGINEER_TIME_SCALE = 0`. Before Run 3, shift every request from the
-engineer's turn k onwards by the modelled gap `g_k` (the first request of turn k is the one whose
-`input_types` is `["text"]`). Use the orchestrator's log for `g_k`. Tool gaps are left untouched.
-This is a ~30-line script to write.
+The recording ran with `ENGINEER_TIME_SCALE = 0` (`--time-scale 0`), but the gap before each
+engineer message was not zero. It includes running the check, the engineer LLM call, and the git
+snapshot. For each engineer turn, `engineer.jsonl` logs both:
+- `think.total`: the modelled gap `g_k`;
+- `recorded_gap_s`: the gap that actually happened.
+
+Before Run 3, shift every request from the next engineer message onwards by `g_k − recorded_gap_s`.
+The first request after an engineer message is the one whose `input_types` is `["text"]`. Tool gaps
+are left untouched. This is a ~30-line script, still to write.
 
 ---
 
@@ -357,7 +402,8 @@ export TOKENIZER=<HF id of the served model>
 
 Run one session end to end, then check:
 
-1. **No HTTP 400s** in `requests.db`, and Claude Code's stream has no `system/api_retry` events.
+1. **No HTTP 400s** in `requests.db`, and Claude Code's stream has no `system/api_retry` events. In
+   `sessions.jsonl`, `context_window` equals `max_model_len`, not 1,000,000 (§5.2).
 2. **Fixed overhead.** `in` of the first call is the tools + system prompt + CLAUDE.md size. Compare
    it with an interactive session in the same repo (§5.3).
 3. **Cache health.** On the 2nd and later calls, vLLM's
@@ -494,12 +540,15 @@ calls.
 - **Replay shares too much cache.** Trace IDs that restart per conversation, replayed with guideLLM's
   default global block table, make unrelated sessions share prefixes (§6.2). The replay then looks far
   better than reality.
-- **Context overflow.** Claude Code assumes 200k for unknown models. Without
-  `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, sessions near compaction get HTTP 400s.
+- **Context overflow.** Claude Code assumes 200k for unknown models, or 1M when only the tier defaults
+  name the model. Then sessions near compaction get HTTP 400s. Set `ANTHROPIC_MODEL` **and**
+  `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (§5.2).
 - **Sandbox bottleneck.** Builds and tests in 32 containers can saturate the host CPU. Tool time then
   stretches and the GPU looks under-loaded. Watch host CPU during Run 2.
 - **Retries hide overload.** Claude Code retries up to 10 times and the proxy 3 times by default. Set
-  the proxy to 0 and count `system/api_retry` events. A retried call is an SLO miss, not a success.
+  the proxy to 0 and count `system/api_retry` events (`api_retries` in `sessions.jsonl`). A retried
+  call is an SLO miss, not a success. A turn that runs out of retries ends its session as
+  `agent_error`.
 - **Long-tail sessions.** One runaway session can dominate a 30-minute replay step. Cap
   `max_engineer_turns` during recording, and don't use guideLLM's `max_context_len` to trim sessions
   (§7, Run 3).

@@ -1,0 +1,3 @@
+# simulate_engineers.py output: transcripts and diffs contain code
+runs/
+__pycache__/
